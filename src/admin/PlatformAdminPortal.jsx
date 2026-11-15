@@ -260,7 +260,6 @@ export default function PlatformAdminPortal() {
         doctors: [],
       };
       setClinics(prev => prev.some(c => c.id === newClinicObj.id) ? prev : [...prev, newClinicObj]);
-      setSelectedClinicId(newClinicObj.id);
     }
 
     setShowClinicModal(false);
@@ -749,25 +748,27 @@ export default function PlatformAdminPortal() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Clinic Filter */}
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300">
-              <span className="text-slate-500">Filter:</span>
-              <select
-                value={selectedClinicId}
-                onChange={(e) => setSelectedClinicId(e.target.value)}
-                className="dark-select bg-slate-900 text-slate-100 text-xs font-semibold focus:outline-none cursor-pointer rounded-lg px-2 py-1 border border-slate-700/80"
-                style={{ colorScheme: 'dark', backgroundColor: '#0f172a', color: '#f8fafc' }}
-              >
-                <option value="all" className="dark-option" style={{ backgroundColor: '#1e293b', color: '#f8fafc' }}>
-                  All Clinics
-                </option>
-                {clinics.map(c => (
-                  <option key={c.id} value={c.id} className="dark-option" style={{ backgroundColor: '#1e293b', color: '#f8fafc' }}>
-                    {c.name}
+            {/* Clinic Filter - ONLY rendered on Doctors tab */}
+            {activeTab === 'doctors' && (
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-slate-300">
+                <span className="text-slate-500">Filter:</span>
+                <select
+                  value={selectedClinicId}
+                  onChange={(e) => setSelectedClinicId(e.target.value)}
+                  className="dark-select bg-slate-900 text-slate-100 text-xs font-semibold focus:outline-none cursor-pointer rounded-lg px-2 py-1 border border-slate-700/80"
+                  style={{ colorScheme: 'dark', backgroundColor: '#0f172a', color: '#f8fafc' }}
+                >
+                  <option value="all" className="dark-option" style={{ backgroundColor: '#1e293b', color: '#f8fafc' }}>
+                    All Clinics
                   </option>
-                ))}
-              </select>
-            </div>
+                  {clinics.map(c => (
+                    <option key={c.id} value={c.id} className="dark-option" style={{ backgroundColor: '#1e293b', color: '#f8fafc' }}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Quick Add Buttons */}
             {activeTab === 'clinics' ? (
@@ -791,7 +792,7 @@ export default function PlatformAdminPortal() {
         {/* ── TAB 1: Clinics Management ────────────────────────────────────── */}
         {activeTab === 'clinics' && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredClinics.map(c => {
+            {clinics.map(c => {
               const isActive = c.active !== false;
               const docCount = (c.doctors || []).length;
 

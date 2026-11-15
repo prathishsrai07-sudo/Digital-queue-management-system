@@ -242,17 +242,18 @@ async function runBrowserE2E() {
     console.log('Testing invalid doctor credentials rejection...');
     await typeInput(page, 'input#username', 'invalid_doctor_name');
     await typeInput(page, 'input#password', 'WrongPassword123!');
-    await clickByText(page, 'Sign In to Portal');
-    await sleep(800);
+    await page.click('button[type="submit"]');
+    await page.waitForFunction(() => document.body.textContent.includes('Invalid username or password'), { timeout: 10000 });
     const invalidErrHtml = await page.content();
-    assert(invalidErrHtml.includes('Invalid username or password') || invalidErrHtml.includes('error'), 'Invalid doctor login rejected with clear error notice');
+    assert(invalidErrHtml.includes('Invalid username or password'), 'Invalid doctor login rejected with clear error notice');
+    await sleep(500);
 
     // Log in with doctor 'mayur' / 'DoctorPass123!'
     console.log('Logging in with valid doctor credentials (mayur)...');
     consoleErrors.length = 0;
     await typeInput(page, 'input#username', 'mayur');
     await typeInput(page, 'input#password', 'DoctorPass123!');
-    await clickByText(page, 'Sign In to Portal');
+    await page.click('button[type="submit"]');
     await page.waitForFunction(() => document.body.textContent.includes('Current Token'), { timeout: 15000 });
     await sleep(500);
 
@@ -408,16 +409,33 @@ async function runBrowserE2E() {
     await page.click('button[type="submit"]');
 
     // Wait for Platform Admin Console to load from Supabase
-    await page.waitForSelector('select.dark-select', { timeout: 10000 });
+    await page.waitForFunction(() => document.body.textContent.includes('Total Clinics'), { timeout: 10000 });
 
     assert(consoleErrors.length === 0, `Logged into Platform Admin Console with 0 console errors (found: ${consoleErrors.length})`);
 
     const adminConsoleHtml = await page.content();
     assert(adminConsoleHtml.includes('Total Clinics') || adminConsoleHtml.includes('Clinics Overview') || adminConsoleHtml.includes('Clinics'), 'Platform Admin Console loaded successfully');
 
-    // C.2 Verify high-contrast clinic filter dropdown
-    const filterSelect = await page.$('select.dark-select');
-    assert(Boolean(filterSelect), 'Dark high-contrast clinic filter dropdown rendered');
+    // C.2 Verify clinic filter dropdown is REMOVED on Clinics tab, but present on Doctors tab
+    const filterOnClinicsTab = await page.$('select.dark-select');
+    assert(!filterOnClinicsTab, 'Clinic filter dropdown is removed on Clinics tab (lists all clinics directly)');
+
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const docTab = btns.find(b => b.textContent && b.textContent.includes('Doctors & Credentials'));
+      if (docTab) docTab.click();
+    });
+    await sleep(600);
+    const filterOnDocsTab = await page.$('select.dark-select');
+    assert(Boolean(filterOnDocsTab), 'Dark high-contrast clinic filter dropdown rendered on Doctors tab');
+
+    // Switch back to Clinics tab
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const clinicTab = btns.find(b => b.textContent && b.textContent.includes('Clinics'));
+      if (clinicTab) clinicTab.click();
+    });
+    await sleep(600);
 
     // Verify NO "Change Password" button in header
     assert(!adminConsoleHtml.includes('Change Password'), 'Zero "Change Password" buttons exist in Platform Admin header');
@@ -464,12 +482,13 @@ async function runBrowserE2E() {
     const patientPage = await browser.newPage();
     await patientPage.goto('http://localhost:5173/', { waitUntil: 'networkidle0' });
     await clickByText(patientPage, 'Get Token');
-    await sleep(600);
+    await patientPage.waitForSelector('input#name', { timeout: 10000 });
     await typeInput(patientPage, 'input#name', 'Check Deactivated');
     await typeInput(patientPage, 'input#mobile', '9876543210');
     await typeInput(patientPage, 'input#place', 'Bengaluru');
     await clickByText(patientPage, 'Continue');
-    await patientPage.waitForSelector('button div span.font-semibold', { timeout: 10000 });
+    await patientPage.waitForFunction(() => document.body.textContent.includes('Select Clinic'), { timeout: 10000 });
+    await sleep(600);
     const patientClinicsHtml = await patientPage.content();
     assert(!patientClinicsHtml.includes('QA Auto Clinic'), 'Deactivated clinic is strictly HIDDEN from Patient Portal');
     await patientPage.close();
@@ -540,12 +559,13 @@ async function runBrowserE2E() {
     const singleDocTestPage = await browser.newPage();
     await singleDocTestPage.goto('http://localhost:5173/', { waitUntil: 'networkidle0' });
     await clickByText(singleDocTestPage, 'Get Token');
-    await sleep(500);
+    await singleDocTestPage.waitForSelector('input#name', { timeout: 10000 });
     await typeInput(singleDocTestPage, 'input#name', 'Single Doc Tester');
     await typeInput(singleDocTestPage, 'input#mobile', '9876543210');
     await typeInput(singleDocTestPage, 'input#place', 'Bengaluru');
     await clickByText(singleDocTestPage, 'Continue');
-    await singleDocTestPage.waitForSelector('button div span.font-semibold', { timeout: 10000 });
+    await singleDocTestPage.waitForFunction(() => document.body.textContent.includes('Select Clinic'), { timeout: 10000 });
+    await sleep(600);
 
     // Click QA Auto Clinic (which has exactly 1 doctor: Dr. QA Specialist)
     await singleDocTestPage.evaluate(() => {
@@ -553,7 +573,8 @@ async function runBrowserE2E() {
       const qaClinicBtn = btns.find(b => b.textContent && b.textContent.includes('QA Auto Clinic'));
       if (qaClinicBtn) qaClinicBtn.click();
     });
-    await sleep(1500);
+    await singleDocTestPage.waitForFunction(() => document.body.textContent.includes('Confirm Your Booking'), { timeout: 10000 });
+    await sleep(600);
 
     const singleDocLandingHtml = await singleDocTestPage.content();
     assert(singleDocLandingHtml.includes('Confirm Your Booking'), 'Single-doctor clinic auto-skipped Doctor Selection and landed directly on Confirm Your Booking!');
@@ -591,8 +612,9 @@ async function runBrowserE2E() {
     await doctorTestPage.goto('http://localhost:5173/doctor', { waitUntil: 'networkidle0' });
     await typeInput(doctorTestPage, 'input#username', 'qa.updated');
     await typeInput(doctorTestPage, 'input#password', 'NewDoctorPass123!');
-    await clickByText(doctorTestPage, 'Sign In to Portal');
-    await sleep(2500);
+    await doctorTestPage.click('button[type="submit"]');
+    await doctorTestPage.waitForFunction(() => document.body.textContent.includes('Current Token') || document.body.textContent.includes('QA Specialist'), { timeout: 15000 });
+    await sleep(500);
     const newDocDashHtml = await doctorTestPage.content();
     assert(newDocDashHtml.includes('Dr. QA Specialist') || newDocDashHtml.includes('QA Specialist'), 'Newly created doctor logged into Doctor Portal immediately');
     await doctorTestPage.close();
