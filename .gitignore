@@ -1,0 +1,29 @@
+# ── Dependencies ─────────────────────────────────────────────
+node_modules/
+
+# ── Build output ─────────────────────────────────────────────
+dist/
+dist-ssr/
+
+# ── Environment variables — NEVER commit secrets ─────────────
+# .env.local contains the Supabase URL and publishable key.
+# Even though the publishable key is safe to expose in the browser,
+# keeping it out of source control is good practice.
+.env
+.env.local
+.env.*.local
+
+# ── Editor / OS files ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.suo
+*.user
+.vscode/
+.idea/
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Vite cache ────────────────────────────────────────────────
+.vite/

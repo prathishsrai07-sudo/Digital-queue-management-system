@@ -1,0 +1,52 @@
+/* These three lines load all of Tailwind's utility classes */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth scrolling for the whole app */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Ensure text is crisp on all screens */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* High-contrast dropdown styling for Windows Chromium/Firefox browsers */
+select {
+  font-family: inherit;
+}
+
+/* Dark selects & options (Platform Admin) */
+select.dark-select,
+.dark-select select {
+  color-scheme: dark;
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+select.dark-select option,
+.dark-select option,
+option.dark-option {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+  padding: 8px 12px;
+}
+
+/* Light selects & options (Doctor Portal & Patient Portal) */
+select.light-select,
+.light-select select {
+  color-scheme: light;
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+select.light-select option,
+.light-select option,
+option.light-option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  padding: 8px 12px;
+}
