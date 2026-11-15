@@ -325,7 +325,8 @@ export default function DoctorsScreen({ session, currentDoctor, onSaveDoctor }) 
               Updates your profile instantly and recalculates wait times for your patients.
             </p>
             <button
-              type="submit"
+              type="button"
+              onClick={handleSubmit}
               disabled={isSubmitting}
               className="flex items-center gap-2 px-6 py-2.5 bg-clinic-600 hover:bg-clinic-700 text-white rounded-xl font-semibold text-sm transition-all shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >

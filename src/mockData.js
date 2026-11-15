@@ -92,8 +92,9 @@ export function getEstimatedTimeRange(positionIndex) {
   else if (positionIndex <= 3) halfWidth = 20;   // ±20 min  → 40-min window
   else                         halfWidth = 30;   // ±30 min  → 60-min window
 
-  const fromMinutes = centreMinutes - halfWidth;
-  const toMinutes   = centreMinutes + halfWidth;
+  const rawFrom = centreMinutes - halfWidth;
+  const fromMinutes = Math.max(0, rawFrom);
+  const toMinutes   = fromMinutes + (halfWidth * 2);
 
   const formatTime = (base, offset) => {
     const d = new Date(base.getTime() + offset * 60000);

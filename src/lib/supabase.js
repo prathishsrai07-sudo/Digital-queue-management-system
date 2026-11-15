@@ -71,26 +71,19 @@ if (import.meta.env.DEV) {
       'Supabase project URL and publishable key, then restart the dev server.'
     );
   } else {
-    // Fire a lightweight ping: list tables in the public schema (0 rows read)
+    // Fire a lightweight ping via confirmed get_active_clinics RPC
     supabase
-      .from('_supabase_connection_test_')   // table doesn't need to exist
-      .select('id')
-      .limit(1)
+      .rpc('get_active_clinics')
       .then(({ error }) => {
-        // PGRST116 = table not found — that is fine, it just proves the
-        // network round-trip and auth succeeded.
-        if (!error || error.code === 'PGRST116' || error.code === '42P01') {
+        if (!error) {
           console.info(
             '[SDQMS] ✅ Supabase client initialized and connected successfully.\n' +
             `Project URL: ${supabaseUrl}`
           );
         } else {
-          console.error(
-            '[SDQMS] ⚠️  Supabase connection test failed.\n' +
-            'Check your VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in .env.local.\n' +
-            'Error:', error.message
-          );
+          console.warn('[SDQMS] Supabase connection status check:', error.message);
         }
-      });
+      })
+      .catch(() => {});
   }
 }

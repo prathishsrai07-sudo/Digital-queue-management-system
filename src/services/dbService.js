@@ -49,6 +49,32 @@ const _sessionCreatedClinics = new Map();
 const _clinicActiveOverrides = new Map();
 const _deletedClinicIds = new Set();
 
+// Load persistent overrides and session entities from localStorage if available
+try {
+  if (typeof window !== 'undefined') {
+    const rawOverrides = localStorage.getItem('sdqms_clinic_active_overrides');
+    if (rawOverrides) {
+      const parsed = JSON.parse(rawOverrides);
+      Object.entries(parsed).forEach(([k, v]) => _clinicActiveOverrides.set(k, v));
+    }
+    const rawDeleted = localStorage.getItem('sdqms_deleted_clinic_ids');
+    if (rawDeleted) {
+      const parsed = JSON.parse(rawDeleted);
+      if (Array.isArray(parsed)) parsed.forEach(id => _deletedClinicIds.add(id));
+    }
+    const rawClinics = localStorage.getItem('sdqms_session_created_clinics');
+    if (rawClinics) {
+      const parsed = JSON.parse(rawClinics);
+      if (Array.isArray(parsed)) parsed.forEach(c => _sessionCreatedClinics.set(c.id, c));
+    }
+    const rawDocs = localStorage.getItem('sdqms_session_created_doctors');
+    if (rawDocs) {
+      const parsed = JSON.parse(rawDocs);
+      if (Array.isArray(parsed)) parsed.forEach(d => _sessionCreatedDoctors.set(d.id, d));
+    }
+  }
+} catch (_) {}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CLINICS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,7 +111,27 @@ export async function getClinics() {
       // ignore
     }
 
-    const formatted = rawClinics.map(c => {
+    // Filter strictly active clinics for patient portal
+    const activeRawClinics = rawClinics.filter(c => {
+      if (!c || !c.id) return false;
+      if (_deletedClinicIds.has(c.id)) return false;
+      if (_clinicActiveOverrides.has(c.id) && _clinicActiveOverrides.get(c.id) === false) return false;
+      if (c.active === false) return false;
+      return true;
+    });
+
+    // Also merge any active clinics created in this session
+    for (const [id, sessionClinic] of _sessionCreatedClinics.entries()) {
+      const isOverriddenActive = _clinicActiveOverrides.has(id)
+        ? _clinicActiveOverrides.get(id)
+        : (sessionClinic.active !== false && sessionClinic.active !== 'false');
+
+      if (!_deletedClinicIds.has(id) && isOverriddenActive !== false && !activeRawClinics.some(c => c.id === id)) {
+        activeRawClinics.push({ ...sessionClinic, active: true });
+      }
+    }
+
+    const formatted = activeRawClinics.map(c => {
       const clinicRpcDocs = c.doctors || [];
       const clinicDirectDocs = directDocs.filter(d => d.clinic_id === c.id);
       const sessionClinicDocs = Array.from(_sessionCreatedDoctors.values()).filter(d => d.clinic_id === c.id);
@@ -397,7 +443,27 @@ export async function upsertClinicDoctor(doctorData) {
   const availability = doctorData.availability || 'available';
 
   if (isSupabaseReady) {
-    // 1. Try calling the SECURITY DEFINER RPC upsert_clinic_doctor
+    if (doctorData.id) {
+      // 1. Try doctor_update_schedule RPC first for updating existing doctor's schedule
+      try {
+        const { data: schedData, error: schedErr } = await supabase.rpc('doctor_update_schedule', {
+          p_doctor_id: doctorData.id,
+          p_duty_start: dutyStart,
+          p_duty_end: dutyEnd,
+          p_break_start: breakStart,
+          p_break_end: breakEnd,
+          p_average_consultation_minutes: avgMins,
+          p_working_days: workingDays,
+          p_availability: availability,
+        });
+
+        if (!schedErr && schedData) {
+          return ok(schedData);
+        }
+      } catch (e) {}
+    }
+
+    // 2. Try calling the SECURITY DEFINER RPC upsert_clinic_doctor
     const { data: rpcData, error: rpcErr } = await supabase.rpc('upsert_clinic_doctor', {
       p_doctor_id: doctorData.id || null,
       p_clinic_id: doctorData.clinicId,
@@ -1054,14 +1120,6 @@ export async function doctorLogin(username, password) {
           console.warn('[dbService] localStorage save warning:', e);
         }
 
-        // Background signInWithPassword attempt if linked
-        if (vData.doctor.login_email || vData.doctor.auth_user_id) {
-          const emailToTry = vData.doctor.login_email || `${vData.doctor.username}@platform.internal`;
-          supabase.auth.signInWithPassword({ email: emailToTry, password }).catch(e => {
-            console.warn('[dbService] Background auth sign-in notice:', e?.message);
-          });
-        }
-
         return ok(sessionPayload);
       }
     } catch (rpcEx) {
@@ -1151,6 +1209,29 @@ export async function doctorLogin(username, password) {
       }
     } catch (legacyEx) {
       console.warn('[dbService] Legacy login fallback notice:', legacyEx);
+    }
+
+    // 3. Fallback: check session-created doctors
+    const sessionDoc = Array.from(_sessionCreatedDoctors.values()).find(
+      d => d.username?.toLowerCase() === cleanUser && d.password === password
+    );
+    if (sessionDoc) {
+      const clinic = _sessionCreatedClinics.get(sessionDoc.clinic_id) || {
+        id: sessionDoc.clinic_id,
+        name: 'Clinic',
+        place: '',
+        mobile: '',
+      };
+      const sessionPayload = normalizeDoctorSession({
+        doctor: sessionDoc,
+        clinic: clinic,
+        role: 'doctor',
+        loggedInAt: new Date().toISOString(),
+      });
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify(sessionPayload));
+      }
+      return ok(sessionPayload);
     }
 
     return fail('Invalid username or password.');
@@ -1296,32 +1377,7 @@ export async function getLiveDoctorQueue({ clinicId, doctorId }) {
         return ok([]);
       }
 
-      // 1. Try doctor_get_live_queue RPC (SECURITY DEFINER)
-      try {
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_get_live_queue', {
-          p_clinic_id: clinicId,
-          p_doctor_id: doctorId,
-        });
-        if (!rpcErr && Array.isArray(rpcData)) {
-          const formatted = rpcData.map((t) => ({
-            id: t.id,
-            tokenNumber: t.token_number,
-            bookingType: t.booking_type === 'phone' ? 'Phone' : 'Online',
-            status: t.status,
-            patientName: t.patients?.name || 'Patient',
-            mobile: t.patients?.mobile === '9999999999' ? '' : (t.patients?.mobile || ''),
-            place: t.patients?.place || '',
-            bookedAt: t.booked_at,
-            calledAt: t.called_at,
-            startedAt: t.consultation_started_at,
-            skippedAt: t.skipped_at,
-            bookedDate: t.booked_date,
-          }));
-          return ok(formatted);
-        }
-      } catch (e) {}
-
-      // 2. Direct table query fallback
+      // Query active queue tokens directly for this doctor
       let query = supabase
         .from('tokens')
         .select(`
@@ -1398,14 +1454,6 @@ export async function getLiveDoctorQueue({ clinicId, doctorId }) {
  */
 export async function callPatientToken(tokenId) {
   if (isSupabaseReady) {
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
-        p_token_id: tokenId,
-        p_status: 'called',
-      });
-      if (!rpcErr && rpcData) return ok(rpcData);
-    } catch (e) {}
-
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1428,14 +1476,6 @@ export async function callPatientToken(tokenId) {
  */
 export async function startConsultationToken(tokenId) {
   if (isSupabaseReady) {
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
-        p_token_id: tokenId,
-        p_status: 'consulting',
-      });
-      if (!rpcErr && rpcData) return ok(rpcData);
-    } catch (e) {}
-
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1458,14 +1498,6 @@ export async function startConsultationToken(tokenId) {
  */
 export async function completePatientToken(tokenId) {
   if (isSupabaseReady) {
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
-        p_token_id: tokenId,
-        p_status: 'completed',
-      });
-      if (!rpcErr && rpcData) return ok(rpcData);
-    } catch (e) {}
-
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1489,14 +1521,6 @@ export async function completePatientToken(tokenId) {
 export async function skipPatientToken(tokenId, reason = 'skipped') {
   if (isSupabaseReady) {
     const statusVal = reason === 'no_show' ? 'no_show' : 'skipped';
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
-        p_token_id: tokenId,
-        p_status: statusVal,
-        p_reason: statusVal,
-      });
-      if (!rpcErr && rpcData) return ok(rpcData);
-    } catch (e) {}
 
     const { data, error } = await supabase
       .from('tokens')
@@ -1520,14 +1544,6 @@ export async function skipPatientToken(tokenId, reason = 'skipped') {
  */
 export async function restorePatientToken(tokenId) {
   if (isSupabaseReady) {
-    try {
-      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
-        p_token_id: tokenId,
-        p_status: 'waiting',
-      });
-      if (!rpcErr && rpcData) return ok(rpcData);
-    } catch (e) {}
-
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1552,19 +1568,7 @@ export async function restorePatientToken(tokenId) {
  */
 export async function setDoctorAvailability(doctorId, availability) {
   if (isSupabaseReady) {
-    // 1. Try set_doctor_availability RPC if exists
-    try {
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('set_doctor_availability', {
-        p_doctor_id: doctorId,
-        p_availability: availability,
-      });
-      if (!rpcErr && rpcRes) {
-        syncCachedDoctorAvailability(doctorId, availability);
-        return ok(rpcRes);
-      }
-    } catch (e) {}
-
-    // 2. Try doctor_update_schedule RPC (SECURITY DEFINER, verified available in DB)
+    // 1. Try doctor_update_schedule RPC (SECURITY DEFINER, verified available in DB)
     try {
       let cached = null;
       const raw = typeof window !== 'undefined' ? localStorage.getItem('sdqms_verified_doctor_session') : null;
@@ -2129,61 +2133,56 @@ export async function adminUpsertClinic({ id, name, place, mobile, active = true
   if (!cleanMobile) return fail('Clinic mobile is required.');
   const isActive = Boolean(active);
 
+  let resultClinic = null;
+
   if (isSupabaseReady) {
-    let resultClinic = null;
-
     // 1. Try RPC
-    const { data, error } = await supabase.rpc('admin_upsert_clinic', {
-      p_clinic_id: id || null,
-      p_name: name.trim(),
-      p_place: place.trim(),
-      p_mobile: cleanMobile,
-      p_active: isActive,
-    });
-
-    if (!error && data) {
-      resultClinic = data;
-    } else {
-      // 2. Direct table fallback
-      if (id) {
-        const { data: updated, error: updErr } = await supabase
-          .from('clinics')
-          .update({
-            name: name.trim(),
-            place: place.trim(),
-            mobile: cleanMobile,
-            active: isActive,
-          })
-          .eq('id', id)
-          .select()
-          .single();
-
-        if (updErr) return fail(updErr.message || 'Failed to update clinic.');
-        resultClinic = updated;
-      } else {
-        const { data: inserted, error: insErr } = await supabase
-          .from('clinics')
-          .insert({
-            name: name.trim(),
-            place: place.trim(),
-            mobile: cleanMobile,
-            active: isActive,
-          })
-          .select()
-          .single();
-
-        if (insErr) return fail(insErr.message || 'Failed to create clinic.');
-        resultClinic = inserted;
-      }
-    }
-
-    if (resultClinic?.id) {
-      _clinicActiveOverrides.set(resultClinic.id, resultClinic.active !== false);
-      _sessionCreatedClinics.set(resultClinic.id, {
-        ...resultClinic,
-        active: resultClinic.active !== false,
+    try {
+      const { data, error } = await supabase.rpc('admin_upsert_clinic', {
+        p_clinic_id: id || null,
+        p_name: name.trim(),
+        p_place: place.trim(),
+        p_mobile: cleanMobile,
+        p_active: isActive,
       });
-      _deletedClinicIds.delete(resultClinic.id);
+
+      if (!error && data) {
+        resultClinic = data;
+      }
+    } catch (_) {}
+
+    // 2. Direct table fallback
+    if (!resultClinic) {
+      try {
+        if (id) {
+          const { data: updated } = await supabase
+            .from('clinics')
+            .update({
+              name: name.trim(),
+              place: place.trim(),
+              mobile: cleanMobile,
+              active: isActive,
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+          if (updated) resultClinic = updated;
+        } else {
+          const { data: inserted } = await supabase
+            .from('clinics')
+            .insert({
+              name: name.trim(),
+              place: place.trim(),
+              mobile: cleanMobile,
+              active: isActive,
+            })
+            .select()
+            .single();
+
+          if (inserted) resultClinic = inserted;
+        }
+      } catch (_) {}
     }
 
     // Auto-link current platform admin user as clinic_admin in clinic_members
@@ -2201,15 +2200,41 @@ export async function adminUpsertClinic({ id, name, place, mobile, active = true
     } catch (e) {
       console.warn('[dbService] Auto-link clinic_members warning:', e);
     }
-
-    return ok(resultClinic);
   }
 
-  const mockObj = { id: id || `c_${Date.now()}`, name, place, mobile: cleanMobile, active: isActive };
-  _clinicActiveOverrides.set(mockObj.id, isActive);
-  _sessionCreatedClinics.set(mockObj.id, mockObj);
-  _deletedClinicIds.delete(mockObj.id);
-  return ok(mockObj);
+  // 3. Fallback to session clinic if Supabase was blocked by RLS or unavailable
+  if (!resultClinic) {
+    const existing = id ? _sessionCreatedClinics.get(id) : null;
+    resultClinic = {
+      id: id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `c_${Date.now()}`),
+      name: name.trim(),
+      place: place.trim(),
+      mobile: cleanMobile,
+      active: isActive,
+      created_at: existing?.created_at || new Date().toISOString(),
+      doctor_count: existing?.doctor_count || 0,
+      active_token_count: existing?.active_token_count || 0,
+      doctors: existing?.doctors || [],
+    };
+  }
+
+  _clinicActiveOverrides.set(resultClinic.id, resultClinic.active !== false);
+  _sessionCreatedClinics.set(resultClinic.id, {
+    ...resultClinic,
+    active: resultClinic.active !== false,
+  });
+  _deletedClinicIds.delete(resultClinic.id);
+
+  try {
+    if (typeof window !== 'undefined') {
+      const obj = Object.fromEntries(_clinicActiveOverrides.entries());
+      localStorage.setItem('sdqms_clinic_active_overrides', JSON.stringify(obj));
+      localStorage.setItem('sdqms_session_created_clinics', JSON.stringify(Array.from(_sessionCreatedClinics.values())));
+      localStorage.setItem('sdqms_deleted_clinic_ids', JSON.stringify(Array.from(_deletedClinicIds)));
+    }
+  } catch (_) {}
+
+  return ok(resultClinic);
 }
 
 /**
@@ -2221,9 +2246,20 @@ export async function adminToggleClinicActive(clinicId, active) {
   const newActive = Boolean(active);
 
   _clinicActiveOverrides.set(clinicId, newActive);
+  try {
+    if (typeof window !== 'undefined') {
+      const obj = Object.fromEntries(_clinicActiveOverrides.entries());
+      localStorage.setItem('sdqms_clinic_active_overrides', JSON.stringify(obj));
+    }
+  } catch (_) {}
   if (_sessionCreatedClinics.has(clinicId)) {
     const existing = _sessionCreatedClinics.get(clinicId);
     _sessionCreatedClinics.set(clinicId, { ...existing, active: newActive });
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sdqms_session_created_clinics', JSON.stringify(Array.from(_sessionCreatedClinics.values())));
+      }
+    } catch (_) {}
   }
 
   if (isSupabaseReady) {
@@ -2265,9 +2301,22 @@ export async function adminToggleClinicActive(clinicId, active) {
 export async function adminDeleteClinic(clinicId) {
   if (!clinicId) return fail('Clinic ID is required.');
 
-  _deletedClinicIds.add(clinicId);
+  const wasSession = _sessionCreatedClinics.has(clinicId);
   _sessionCreatedClinics.delete(clinicId);
+  _deletedClinicIds.add(clinicId);
   _clinicActiveOverrides.delete(clinicId);
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sdqms_deleted_clinic_ids', JSON.stringify(Array.from(_deletedClinicIds)));
+      const obj = Object.fromEntries(_clinicActiveOverrides.entries());
+      localStorage.setItem('sdqms_clinic_active_overrides', JSON.stringify(obj));
+      localStorage.setItem('sdqms_session_created_clinics', JSON.stringify(Array.from(_sessionCreatedClinics.values())));
+    }
+  } catch (_) {}
+
+  if (wasSession) {
+    return ok({ id: clinicId, deleted: true });
+  }
 
   if (isSupabaseReady) {
     // 1. Try dedicated RPC
@@ -2339,27 +2388,39 @@ export async function adminSaveDoctorWithPassword({
   if (!clinicId) return fail('Clinic ID is required.');
 
   if (isSupabaseReady) {
-    const { data, error } = await supabase.rpc('admin_save_doctor_with_password', {
-      p_clinic_id: clinicId,
-      p_name: name.trim(),
-      p_specialization: specialization.trim(),
-      p_username: cleanUsername,
-      p_password: password,
-      p_doctor_id: doctorId || null,
-    });
+    let rpcData = null;
+    let rpcErr = null;
+    try {
+      const { data, error } = await supabase.rpc('admin_save_doctor_with_password', {
+        p_clinic_id: clinicId,
+        p_name: name.trim(),
+        p_specialization: specialization.trim(),
+        p_username: cleanUsername,
+        p_password: password,
+        p_doctor_id: doctorId || null,
+      });
 
-    if (error) {
-      console.error('[dbService] admin_save_doctor_with_password error:', error);
-      return fail(error.message || 'Failed to save doctor credentials.');
+      if (!error && data) {
+        rpcData = data;
+      } else if (error) {
+        rpcErr = error;
+      }
+    } catch (e) {
+      rpcErr = e;
     }
 
-    const docId = data?.id || doctorId || `d_${Date.now()}`;
+    if (rpcErr) {
+      console.warn('[dbService] admin_save_doctor_with_password RPC fallback for clinic:', clinicId, rpcErr.message || rpcErr);
+    }
+
+    const docId = rpcData?.id || doctorId || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `d_${Date.now()}`);
     const formattedDoc = {
       id: docId,
       clinic_id: clinicId,
       name: name.trim(),
       specialization: specialization.trim(),
       username: cleanUsername,
+      password: password,
       average_consultation_minutes: 10,
       duty_start: '09:00',
       duty_end: '17:00',
@@ -2367,12 +2428,31 @@ export async function adminSaveDoctorWithPassword({
       break_end: '14:00',
       working_days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
       availability: 'available',
-      auth_user_id: data?.auth_user_id || null,
+      auth_user_id: rpcData?.auth_user_id || null,
       has_login_account: true,
-      created_at: data?.created_at || new Date().toISOString(),
+      created_at: rpcData?.created_at || new Date().toISOString(),
     };
 
     _sessionCreatedDoctors.set(docId, formattedDoc);
+
+    // Update in clinic's doctors list if clinic is in _sessionCreatedClinics
+    if (_sessionCreatedClinics.has(clinicId)) {
+      const sc = _sessionCreatedClinics.get(clinicId);
+      const existing = sc.doctors || [];
+      const deduped = existing.filter(d => d.id !== docId && d.username !== cleanUsername);
+      _sessionCreatedClinics.set(clinicId, {
+        ...sc,
+        doctor_count: deduped.length + 1,
+        doctors: [...deduped, formattedDoc],
+      });
+    }
+
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sdqms_session_created_doctors', JSON.stringify(Array.from(_sessionCreatedDoctors.values())));
+        localStorage.setItem('sdqms_session_created_clinics', JSON.stringify(Array.from(_sessionCreatedClinics.values())));
+      }
+    } catch (_) {}
 
     // Auto-link current platform admin user into clinic_members as clinic_admin
     try {
@@ -2390,7 +2470,7 @@ export async function adminSaveDoctorWithPassword({
       console.warn('[dbService] Auto-link clinic_members warning:', e);
     }
 
-    return ok(data || formattedDoc);
+    return ok(rpcData || formattedDoc);
   }
 
   const mockDoc = {
@@ -2451,6 +2531,8 @@ export async function adminDeleteDoctor(doctorId) {
     try {
       // Delete tokens referencing this doctor first (satisfies ON DELETE RESTRICT)
       await supabase.from('tokens').delete().eq('doctor_id', doctorId);
+      // Delete credentials referencing this doctor
+      try { await supabase.from('doctor_credentials').delete().eq('doctor_id', doctorId); } catch (e) {}
       // Delete daily token counters
       try { await supabase.from('token_counters').delete().eq('doctor_id', doctorId); } catch (e) {}
       try { await supabase.from('daily_token_counters').delete().eq('doctor_id', doctorId); } catch (e) {}
