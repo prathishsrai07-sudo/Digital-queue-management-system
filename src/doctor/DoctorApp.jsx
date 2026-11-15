@@ -11,7 +11,7 @@
  *   4. Route between: Dashboard, Live Queue, Add Patient, My Schedule, Settings
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, Component } from 'react';
 import {
   doctorLogout,
   getDoctorAuthSession,
@@ -37,6 +37,66 @@ import AddPatientScreen  from './screens/AddPatientScreen';
 import DoctorsScreen     from './screens/DoctorsScreen';
 import SettingsScreen    from './screens/SettingsScreen';
 
+class DoctorPortalErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('[DoctorPortalErrorBoundary] Runtime error caught:', error, errorInfo);
+  }
+
+  handleResetSession = () => {
+    try {
+      localStorage.removeItem('sdqms_verified_doctor_session');
+    } catch (_) {}
+    window.location.href = '/doctor';
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
+          <div className="bg-white max-w-md w-full p-6 rounded-2xl shadow-xl border border-slate-200 text-center">
+            <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4 font-bold text-xl">
+              !
+            </div>
+            <h2 className="text-xl font-bold text-slate-900 mb-2">Doctor Portal Recovery</h2>
+            <p className="text-sm text-slate-500 mb-5">
+              The portal encountered an unexpected display issue. Your medical data is safe in the database.
+            </p>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={this.handleResetSession}
+                className="w-full py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-sm transition-all shadow-sm"
+              >
+                Clear Stored Session & Return to Login
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm transition-all"
+              >
+                Reload Page
+              </button>
+            </div>
+            {this.state.error?.message && (
+              <p className="mt-4 text-[11px] text-slate-400 font-mono text-left bg-slate-50 p-2.5 rounded-lg border border-slate-100 overflow-x-auto">
+                {this.state.error.message}
+              </p>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const VIEWS = {
   DASHBOARD:   'dashboard',
   QUEUE:       'queue',
@@ -45,7 +105,7 @@ const VIEWS = {
   SETTINGS:    'settings',
 };
 
-export default function DoctorApp() {
+function DoctorAppContent() {
   // ── Authentication & Initial Load State ───────────────────────
   const [session, setSession] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -61,22 +121,40 @@ export default function DoctorApp() {
   useEffect(() => {
     let mounted = true;
     async function checkAuth() {
-      const activeSession = await getDoctorAuthSession();
-      if (mounted) {
-        if (activeSession) {
-          setSession(activeSession);
-          setDoctorStatusState(activeSession.availability || 'available');
+      try {
+        const activeSession = await getDoctorAuthSession();
+        if (mounted) {
+          if (activeSession && (activeSession.doctorId || activeSession.id)) {
+            setSession(activeSession);
+            setDoctorStatusState(activeSession.availability || 'available');
 
-          // Fetch only the logged-in doctor's row
-          if (activeSession.doctorId || activeSession.authUserId) {
-            const { data: doc } = await getLoggedInDoctorProfile(activeSession.doctorId, activeSession.authUserId);
-            if (doc) {
-              setCurrentDoctor(doc);
-              setDoctorStatusState(doc.availability || 'available');
+            // Fetch only the logged-in doctor's row
+            const targetDocId = activeSession.doctorId || activeSession.id;
+            const targetAuthId = activeSession.authUserId;
+            if (targetDocId || targetAuthId) {
+              const { data: doc } = await getLoggedInDoctorProfile(targetDocId, targetAuthId);
+              if (doc && mounted) {
+                setCurrentDoctor(doc);
+                setDoctorStatusState(doc.availability || activeSession.availability || 'available');
+              }
             }
+          } else {
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('sdqms_verified_doctor_session');
+            }
+            setSession(null);
           }
+          setIsInitializing(false);
         }
-        setIsInitializing(false);
+      } catch (err) {
+        console.error('[DoctorApp] checkAuth error:', err);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('sdqms_verified_doctor_session');
+        }
+        if (mounted) {
+          setSession(null);
+          setIsInitializing(false);
+        }
       }
     }
     checkAuth();
@@ -242,12 +320,16 @@ export default function DoctorApp() {
   }
 
   const activeDocDisplay = currentDoctor || {
-    id: session.doctorId,
-    name: session.doctorName,
-    specialization: session.specialisation,
-    dutyStart: session.dutyStart,
-    dutyEnd: session.dutyEnd,
-    availability: session.availability || doctorStatus,
+    id: session?.doctorId,
+    name: session?.doctorName || 'Doctor',
+    specialization: session?.specialisation || session?.specialization || 'General',
+    specialisation: session?.specialisation || session?.specialization || 'General',
+    dutyStart: session?.dutyStart || '09:00',
+    dutyEnd: session?.dutyEnd || '17:00',
+    breakStart: session?.breakStart || '',
+    breakEnd: session?.breakEnd || '',
+    workingDays: session?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+    availability: session?.availability || doctorStatus || 'available',
   };
 
   // ── Logged in → show portal ───────────────────────────────────
@@ -256,8 +338,8 @@ export default function DoctorApp() {
       activeNav={view}
       onNav={setView}
       onLogout={handleLogout}
-      doctorName={session.doctorName}
-      clinicName={session.clinicName}
+      doctorName={session?.doctorName || currentDoctor?.name || 'Doctor'}
+      clinicName={session?.clinicName || 'Clinic'}
     >
       {view === VIEWS.DASHBOARD && (
         <DashboardScreen
@@ -285,10 +367,13 @@ export default function DoctorApp() {
       {view === VIEWS.ADD_PATIENT && (
         <AddPatientScreen
           session={session}
-          clinic={{ id: session.clinicId, name: session.clinicName }}
+          clinic={{ id: session?.clinicId, name: session?.clinicName || 'Clinic' }}
           currentDoctor={activeDocDisplay}
           onAddPatient={async (patientData) => {
             // Strictly enforce booking under logged-in doctor
+            if (!session?.clinicId || !session?.doctorId) {
+              return { error: { message: 'Invalid session. Please sign in again.' } };
+            }
             const res = await addPhonePatient({
               clinicId: session.clinicId,
               doctorId: session.doctorId,
@@ -321,5 +406,13 @@ export default function DoctorApp() {
         />
       )}
     </DoctorPageShell>
+  );
+}
+
+export default function DoctorApp() {
+  return (
+    <DoctorPortalErrorBoundary>
+      <DoctorAppContent />
+    </DoctorPortalErrorBoundary>
   );
 }

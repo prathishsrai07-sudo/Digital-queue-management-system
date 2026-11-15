@@ -19,6 +19,40 @@ import DoctorCard from '../components/DoctorCard';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+const DAY_MAP_TO_SHORT = {
+  Monday: 'Mon',
+  Tuesday: 'Tue',
+  Wednesday: 'Wed',
+  Thursday: 'Thu',
+  Friday: 'Fri',
+  Saturday: 'Sat',
+  Sunday: 'Sun',
+  Mon: 'Mon',
+  Tue: 'Tue',
+  Wed: 'Wed',
+  Thu: 'Thu',
+  Fri: 'Fri',
+  Sat: 'Sat',
+  Sun: 'Sun',
+};
+
+const DAY_MAP_TO_FULL = {
+  Mon: 'Monday',
+  Tue: 'Tuesday',
+  Wed: 'Wednesday',
+  Thu: 'Thursday',
+  Fri: 'Friday',
+  Sat: 'Saturday',
+  Sun: 'Sunday',
+  Monday: 'Monday',
+  Tuesday: 'Tuesday',
+  Wednesday: 'Wednesday',
+  Thursday: 'Thursday',
+  Friday: 'Friday',
+  Saturday: 'Saturday',
+  Sunday: 'Sunday',
+};
+
 export default function SettingsScreen({ session, currentDoctor, onSaveDoctor }) {
   // Lock strictly to logged-in doctor
   const currentDocId = currentDoctor?.id || session?.doctorId;
@@ -43,22 +77,25 @@ export default function SettingsScreen({ session, currentDoctor, onSaveDoctor })
   useEffect(() => {
     const doc = currentDoc;
     if (doc) {
+      const rawDays = doc.workingDays || doc.working_days || session?.workingDays || session?.working_days;
+      const normalizedDays = Array.isArray(rawDays) && rawDays.length > 0
+        ? rawDays.map(d => DAY_MAP_TO_SHORT[d] || d)
+        : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
       setForm({
         availability: doc.availability || (doc.available ? 'available' : 'unavailable'),
         avgConsultationMinutes: String(doc.averageConsultationMinutes || doc.avgConsultationMinutes || 10),
-        dutyStart: doc.dutyStart || session?.dutyStart || '09:00',
-        dutyEnd: doc.dutyEnd || session?.dutyEnd || '17:00',
-        breakStart: doc.breakStart || '',
-        breakEnd: doc.breakEnd || '',
-        workingDays: Array.isArray(doc.workingDays) && doc.workingDays.length > 0
-          ? doc.workingDays
-          : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        dutyStart: (doc.dutyStart || session?.dutyStart || '09:00').slice(0, 5),
+        dutyEnd: (doc.dutyEnd || session?.dutyEnd || '17:00').slice(0, 5),
+        breakStart: doc.breakStart ? doc.breakStart.slice(0, 5) : (session?.breakStart ? session.breakStart.slice(0, 5) : ''),
+        breakEnd: doc.breakEnd ? doc.breakEnd.slice(0, 5) : (session?.breakEnd ? session.breakEnd.slice(0, 5) : ''),
+        workingDays: normalizedDays,
       });
     } else if (session) {
       setForm(prev => ({
         ...prev,
-        dutyStart: session.dutyStart || '09:00',
-        dutyEnd: session.dutyEnd || '17:00',
+        dutyStart: (session.dutyStart || '09:00').slice(0, 5),
+        dutyEnd: (session.dutyEnd || '17:00').slice(0, 5),
       }));
     }
   }, [currentDoc, session]);
@@ -129,7 +166,7 @@ export default function SettingsScreen({ session, currentDoctor, onSaveDoctor })
       dutyEnd: form.dutyEnd,
       breakStart: form.breakStart && form.breakStart.trim() ? form.breakStart.trim() : null,
       breakEnd: form.breakEnd && form.breakEnd.trim() ? form.breakEnd.trim() : null,
-      workingDays: form.workingDays,
+      workingDays: (form.workingDays || []).map(d => DAY_MAP_TO_FULL[d] || d),
     };
 
     if (onSaveDoctor) {

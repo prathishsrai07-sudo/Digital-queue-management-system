@@ -9,7 +9,7 @@
  *   - Current status with animated pills
  *   - Multi-color distinct KPI stat cards (Current Token = Indigo/Violet, Waiting = Amber/Orange, Served = Emerald/Teal)
  */
-import { Phone, MapPin, Clock, Hash, Activity, CalendarClock, ArrowRight, UserCircle, ShieldCheck } from 'lucide-react';
+import { Users, Phone, MapPin, Clock, Hash, Activity, CalendarClock, ArrowRight, UserCircle, ShieldCheck } from 'lucide-react';
 import DoctorCard from '../components/DoctorCard';
 import StatusBadge from '../components/StatusBadge';
 import { DOCTOR_STATUS } from '../mockDoctorData';
@@ -76,11 +76,13 @@ export default function DashboardScreen({
             <div className="flex flex-wrap gap-x-5 gap-y-1.5 mt-2.5 text-xs text-slate-600">
               <span className="flex items-center gap-1.5 font-medium">
                 <MapPin size={14} className="text-indigo-600" />
-                {session.clinicName} &bull; {session.clinicPlace}
+                {session?.clinicName || 'Clinic'} {session?.clinicPlace ? `• ${session.clinicPlace}` : ''}
               </span>
-              <a href={`tel:${session.clinicMobile}`} className="flex items-center gap-1.5 text-teal-700 hover:text-teal-800 font-semibold hover:underline">
-                <Phone size={13} /> {session.clinicMobile}
-              </a>
+              {session?.clinicMobile && (
+                <a href={`tel:${session.clinicMobile}`} className="flex items-center gap-1.5 text-teal-700 hover:text-teal-800 font-semibold hover:underline">
+                  <Phone size={13} /> {session.clinicMobile}
+                </a>
+              )}
             </div>
 
             {currentDutyStart && currentDutyEnd && (
@@ -140,10 +142,10 @@ export default function DashboardScreen({
           </div>
           <div className="mt-3">
             <p className="text-4xl sm:text-5xl font-black tracking-wider text-white drop-shadow-sm">
-              {currentPatient ? currentPatient.tokenNumber : '—'}
+              {currentPatient ? (currentPatient.tokenNumber || currentPatient.token_number || '—') : '—'}
             </p>
             <p className="text-xs text-indigo-100 mt-1 font-medium truncate">
-              {currentPatient ? `${currentPatient.patientName} (${currentPatient.status})` : 'No consultation active'}
+              {currentPatient ? `${currentPatient.patientName || currentPatient.name || 'Patient'} (${currentPatient.status || 'Active'})` : 'No consultation active'}
             </p>
           </div>
         </div>
@@ -244,14 +246,14 @@ export default function DashboardScreen({
         ) : (
           <div className="flex flex-col gap-2.5">
             {waitingTokens.slice(0, 5).map((t, i) => (
-              <div key={t.id} className="flex items-center gap-3 px-3.5 py-3 bg-slate-50 hover:bg-teal-50/40 rounded-xl border border-slate-100 transition-all">
+              <div key={t.id || i} className="flex items-center gap-3 px-3.5 py-3 bg-slate-50 hover:bg-teal-50/40 rounded-xl border border-slate-100 transition-all">
                 <span className="w-7 h-7 flex items-center justify-center rounded-full bg-teal-100 text-teal-800 text-xs font-extrabold flex-shrink-0">
                   {i + 1}
                 </span>
-                <span className="font-black text-slate-800 text-sm w-14">{t.tokenNumber}</span>
-                <span className="text-slate-700 text-sm font-semibold flex-1 truncate">{t.patientName}</span>
-                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${t.bookingType === 'Phone' ? 'bg-purple-100 text-purple-700 border border-purple-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200'}`}>
-                  {t.bookingType}
+                <span className="font-black text-slate-800 text-sm w-14">{t.tokenNumber || t.token_number}</span>
+                <span className="text-slate-700 text-sm font-semibold flex-1 truncate">{t.patientName || t.name || 'Patient'}</span>
+                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${(t.bookingType || t.booking_type) === 'phone' || (t.bookingType || t.booking_type) === 'Phone' ? 'bg-purple-100 text-purple-700 border border-purple-200' : 'bg-emerald-100 text-emerald-700 border border-emerald-200'}`}>
+                  {t.bookingType || (t.booking_type === 'phone' ? 'Phone' : 'Online')}
                 </span>
               </div>
             ))}

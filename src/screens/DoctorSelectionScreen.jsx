@@ -19,7 +19,7 @@ export default function DoctorSelectionScreen({ clinic, onBack, onSelectDoctor }
       />
 
       <div className="flex flex-col gap-3">
-        {clinic.doctors.map((doctor) => {
+        {(clinic?.doctors || []).map((doctor) => {
           const isUnavail = doctor.availability === 'unavailable';
           const isOnBreak = doctor.availability === 'on_break';
           return (

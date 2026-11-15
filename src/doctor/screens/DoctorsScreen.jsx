@@ -23,6 +23,40 @@ import StatusBadge from '../components/StatusBadge';
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
+const DAY_MAP_TO_SHORT = {
+  Monday: 'Mon',
+  Tuesday: 'Tue',
+  Wednesday: 'Wed',
+  Thursday: 'Thu',
+  Friday: 'Fri',
+  Saturday: 'Sat',
+  Sunday: 'Sun',
+  Mon: 'Mon',
+  Tue: 'Tue',
+  Wed: 'Wed',
+  Thu: 'Thu',
+  Fri: 'Fri',
+  Sat: 'Sat',
+  Sun: 'Sun',
+};
+
+const DAY_MAP_TO_FULL = {
+  Mon: 'Monday',
+  Tue: 'Tuesday',
+  Wed: 'Wednesday',
+  Thu: 'Thursday',
+  Fri: 'Friday',
+  Sat: 'Saturday',
+  Sun: 'Sunday',
+  Monday: 'Monday',
+  Tuesday: 'Tuesday',
+  Wednesday: 'Wednesday',
+  Thursday: 'Thursday',
+  Friday: 'Friday',
+  Saturday: 'Saturday',
+  Sunday: 'Sunday',
+};
+
 export default function DoctorsScreen({ session, currentDoctor, onSaveDoctor }) {
   const doctorId = currentDoctor?.id || session?.doctorId;
   const doctorName = currentDoctor?.name || session?.doctorName || 'Doctor';
@@ -47,16 +81,19 @@ export default function DoctorsScreen({ session, currentDoctor, onSaveDoctor }) 
   // Sync state whenever currentDoctor or session updates
   useEffect(() => {
     if (currentDoctor || session) {
+      const rawDays = currentDoctor?.workingDays || currentDoctor?.working_days || session?.workingDays || session?.working_days;
+      const normalizedDays = Array.isArray(rawDays) && rawDays.length > 0
+        ? rawDays.map(d => DAY_MAP_TO_SHORT[d] || d)
+        : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
       setForm({
         availability: currentDoctor?.availability || session?.availability || 'available',
         avgConsultationMinutes: String(currentDoctor?.averageConsultationMinutes || currentDoctor?.avgConsultationMinutes || session?.avgConsultationMinutes || 10),
-        dutyStart: currentDoctor?.dutyStart || session?.dutyStart || '09:00',
-        dutyEnd: currentDoctor?.dutyEnd || session?.dutyEnd || '17:00',
-        breakStart: currentDoctor?.breakStart || session?.breakStart || '',
-        breakEnd: currentDoctor?.breakEnd || session?.breakEnd || '',
-        workingDays: Array.isArray(currentDoctor?.workingDays) && currentDoctor.workingDays.length > 0
-          ? currentDoctor.workingDays
-          : (Array.isArray(session?.workingDays) && session.workingDays.length > 0 ? session.workingDays : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']),
+        dutyStart: (currentDoctor?.dutyStart || session?.dutyStart || '09:00').slice(0, 5),
+        dutyEnd: (currentDoctor?.dutyEnd || session?.dutyEnd || '17:00').slice(0, 5),
+        breakStart: currentDoctor?.breakStart ? currentDoctor.breakStart.slice(0, 5) : (session?.breakStart ? session.breakStart.slice(0, 5) : ''),
+        breakEnd: currentDoctor?.breakEnd ? currentDoctor.breakEnd.slice(0, 5) : (session?.breakEnd ? session.breakEnd.slice(0, 5) : ''),
+        workingDays: normalizedDays,
       });
     }
   }, [currentDoctor, session]);
@@ -123,7 +160,7 @@ export default function DoctorsScreen({ session, currentDoctor, onSaveDoctor }) 
       dutyEnd: form.dutyEnd,
       breakStart: form.breakStart && form.breakStart.trim() ? form.breakStart.trim() : null,
       breakEnd: form.breakEnd && form.breakEnd.trim() ? form.breakEnd.trim() : null,
-      workingDays: form.workingDays,
+      workingDays: (form.workingDays || []).map(d => DAY_MAP_TO_FULL[d] || d),
     };
 
     if (onSaveDoctor) {
@@ -183,7 +220,7 @@ export default function DoctorsScreen({ session, currentDoctor, onSaveDoctor }) 
           <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-teal-500 to-indigo-600 text-white font-bold text-lg flex items-center justify-center shadow-sm">
-                {doctorName.charAt(0)}
+                {doctorName?.charAt(0) || 'D'}
               </div>
               <div>
                 <p className="font-bold text-slate-900 text-base leading-tight">{doctorName}</p>

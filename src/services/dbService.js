@@ -905,6 +905,119 @@ export const checkTokenByMobile = getActiveTokensByMobile;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * normalizeDoctorSession(raw)
+ * Strictly normalizes doctor session data into both flattened and nested shapes.
+ * Ensures properties like doctorId, clinicId, doctorName, clinicName, clinicPlace,
+ * clinicMobile, dutyStart, dutyEnd, breakStart, breakEnd, workingDays,
+ * avgConsultationMinutes, availability, role, doctor, clinic, doctors, clinics, user
+ * are guaranteed to exist, eliminating all "TypeError: Cannot read properties of undefined/null"
+ * crashes across all Doctor Portal screens.
+ */
+export function normalizeDoctorSession(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  // Extract nested doctor and clinic if present
+  const doc = raw.doctor || (Array.isArray(raw.doctors) && raw.doctors[0]) || raw;
+  const cl = raw.clinic || (Array.isArray(raw.clinics) && raw.clinics[0]) || {};
+
+  const doctorId = doc.id || doc.doctorId || raw.doctorId || raw.id;
+  if (!doctorId) return null; // Invalid session without doctor identifier
+
+  const clinicId = cl.id || cl.clinicId || doc.clinic_id || doc.clinicId || raw.clinicId;
+  const clinicName = cl.name || cl.clinicName || doc.clinicName || raw.clinicName || 'Clinic';
+  const clinicPlace = cl.place || cl.clinicPlace || doc.clinicPlace || raw.clinicPlace || '';
+  const clinicMobile = cl.mobile || cl.clinicMobile || doc.clinicMobile || raw.clinicMobile || '';
+
+  const doctorName = doc.name || raw.doctorName || 'Doctor';
+  const specialization = doc.specialization || doc.specialisation || raw.specialisation || raw.specialization || 'General Physician';
+  const username = doc.username || raw.username || 'doctor';
+  const authUserId = doc.auth_user_id || doc.authUserId || raw.authUserId || `doc_${doctorId}`;
+  const email = doc.login_email || doc.email || raw.email || `${username}@platform.internal`;
+
+  const dutyStart = (doc.duty_start || doc.dutyStart || raw.dutyStart || '09:00').toString().slice(0, 5);
+  const dutyEnd = (doc.duty_end || doc.dutyEnd || raw.dutyEnd || '17:00').toString().slice(0, 5);
+  const breakStart = (doc.break_start || doc.breakStart || raw.breakStart || '').toString().slice(0, 5);
+  const breakEnd = (doc.break_end || doc.breakEnd || raw.breakEnd || '').toString().slice(0, 5);
+
+  const rawWorkingDays = doc.working_days || doc.workingDays || raw.workingDays;
+  const workingDays = Array.isArray(rawWorkingDays) && rawWorkingDays.length > 0
+    ? rawWorkingDays
+    : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  const avgConsultationMinutes = Number(
+    doc.average_consultation_minutes || doc.avgConsultationMinutes || raw.avgConsultationMinutes || raw.averageConsultationMinutes || 10
+  ) || 10;
+
+  const availability = doc.availability || raw.availability || 'available';
+
+  const normalizedDoctor = {
+    ...doc,
+    id: doctorId,
+    name: doctorName,
+    specialization,
+    specialisation: specialization,
+    username,
+    clinicId,
+    clinic_id: clinicId,
+    dutyStart,
+    duty_start: dutyStart,
+    dutyEnd,
+    duty_end: dutyEnd,
+    breakStart,
+    break_start: breakStart,
+    breakEnd,
+    break_end: breakEnd,
+    workingDays,
+    working_days: workingDays,
+    avgConsultationMinutes,
+    averageConsultationMinutes: avgConsultationMinutes,
+    average_consultation_minutes: avgConsultationMinutes,
+    availability,
+    available: availability === 'available',
+  };
+
+  const normalizedClinic = {
+    ...cl,
+    id: clinicId,
+    name: clinicName,
+    place: clinicPlace,
+    mobile: clinicMobile,
+  };
+
+  return {
+    authUserId,
+    email,
+    username,
+    role: raw.role || 'doctor',
+    doctorId,
+    id: doctorId,
+    doctorName,
+    name: doctorName,
+    specialisation: specialization,
+    specialization,
+    dutyStart,
+    dutyEnd,
+    breakStart,
+    breakEnd,
+    workingDays,
+    avgConsultationMinutes,
+    averageConsultationMinutes: avgConsultationMinutes,
+    availability,
+    available: availability === 'available',
+    clinicId,
+    clinicName,
+    clinicPlace,
+    clinicMobile,
+    doctor: normalizedDoctor,
+    clinic: normalizedClinic,
+    user: { id: authUserId, email, username },
+    doctors: [normalizedDoctor],
+    clinics: [normalizedClinic],
+    loggedInAt: raw.loggedInAt || new Date().toISOString(),
+  };
+}
+
+/**
  * doctorLogin(username, password) / loginDoctor(username, password)
  * Authenticates clinic staff / doctors via Supabase RPC verify_doctor_credentials.
  * If verified, stores the doctor session in localStorage and logs the doctor directly
@@ -925,32 +1038,12 @@ export async function doctorLogin(username, password) {
       });
 
       if (!vErr && vData && vData.doctor && vData.clinic) {
-        const doc = vData.doctor;
-        const cl = vData.clinic;
-
-        const sessionPayload = {
-          authUserId: doc.auth_user_id || `doc_${doc.id}`,
-          email: doc.login_email || `${doc.username}@platform.internal`,
-          username: doc.username,
-          clinicId: cl.id,
-          clinicName: cl.name,
-          clinicPlace: cl.place || '',
-          clinicMobile: cl.mobile || '',
+        const sessionPayload = normalizeDoctorSession({
+          doctor: vData.doctor,
+          clinic: vData.clinic,
           role: 'doctor',
-          doctorId: doc.id,
-          doctorName: doc.name,
-          specialisation: doc.specialization || '',
-          specialization: doc.specialization || '',
-          dutyStart: doc.duty_start ? doc.duty_start.slice(0, 5) : '09:00',
-          dutyEnd: doc.duty_end ? doc.duty_end.slice(0, 5) : '17:00',
-          breakStart: doc.break_start ? doc.break_start.slice(0, 5) : '',
-          breakEnd: doc.break_end ? doc.break_end.slice(0, 5) : '',
-          workingDays: doc.working_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-          avgConsultationMinutes: doc.average_consultation_minutes || 10,
-          averageConsultationMinutes: doc.average_consultation_minutes || 10,
-          availability: doc.availability || 'available',
           loggedInAt: new Date().toISOString(),
-        };
+        });
 
         // Persist verified doctor session in localStorage so refreshing /doctor keeps them logged in
         try {
@@ -962,8 +1055,8 @@ export async function doctorLogin(username, password) {
         }
 
         // Background signInWithPassword attempt if linked
-        if (doc.login_email || doc.auth_user_id) {
-          const emailToTry = doc.login_email || `${doc.username}@platform.internal`;
+        if (vData.doctor.login_email || vData.doctor.auth_user_id) {
+          const emailToTry = vData.doctor.login_email || `${vData.doctor.username}@platform.internal`;
           supabase.auth.signInWithPassword({ email: emailToTry, password }).catch(e => {
             console.warn('[dbService] Background auth sign-in notice:', e?.message);
           });
@@ -1018,16 +1111,18 @@ export async function doctorLogin(username, password) {
               .or(`auth_user_id.eq.${authUser.id},username.ilike.${cleanUser}`)
               .maybeSingle();
 
-            const sessionPayload = {
+            const sessionPayload = normalizeDoctorSession({
               authUserId: authUser.id,
               email: authUser.email,
               username: docData?.username || cleanUser,
               clinicId: member.clinic_id,
+              clinic: member.clinics,
               clinicName: member.clinics?.name || 'Clinic',
               clinicPlace: member.clinics?.place || '',
               clinicMobile: member.clinics?.mobile || '',
               role: member.role,
               doctorId: docData?.id || null,
+              doctor: docData,
               doctorName: docData?.name || authUser.user_metadata?.name || 'Doctor',
               specialisation: docData?.specialization || '',
               specialization: docData?.specialization || '',
@@ -1040,7 +1135,9 @@ export async function doctorLogin(username, password) {
               averageConsultationMinutes: docData?.average_consultation_minutes || 10,
               availability: docData?.availability || 'available',
               loggedInAt: new Date().toISOString(),
-            };
+            });
+
+            if (!sessionPayload) return fail('Could not construct valid doctor session.');
 
             try {
               if (typeof window !== 'undefined') {
@@ -1075,12 +1172,18 @@ export async function getDoctorAuthSession() {
     const raw = typeof window !== 'undefined' ? localStorage.getItem('sdqms_verified_doctor_session') : null;
     if (raw) {
       const cached = JSON.parse(raw);
-      if (cached && cached.doctorId) {
-        return cached;
+      const normalized = normalizeDoctorSession(cached);
+      if (normalized && normalized.doctorId) {
+        return normalized;
+      } else {
+        if (typeof window !== 'undefined') localStorage.removeItem('sdqms_verified_doctor_session');
       }
     }
   } catch (e) {
     console.warn('[dbService] Error reading cached doctor session:', e);
+    try {
+      if (typeof window !== 'undefined') localStorage.removeItem('sdqms_verified_doctor_session');
+    } catch (_) {}
   }
 
   if (!isSupabaseReady) return null;
@@ -1121,16 +1224,18 @@ export async function getDoctorAuthSession() {
       doctor = docData;
     }
 
-    const payload = {
+    const payload = normalizeDoctorSession({
       authUserId: authUser.id,
       email: authUser.email,
       username: doctor?.username || authUser.email?.split('@')[0] || 'doctor',
       clinicId: member.clinic_id,
+      clinic: member.clinics,
       clinicName: member.clinics?.name || 'Clinic',
       clinicPlace: member.clinics?.place || '',
       clinicMobile: member.clinics?.mobile || '',
       role: member.role,
       doctorId: doctor?.id || null,
+      doctor,
       doctorName: doctor?.name || authUser.user_metadata?.name || 'Doctor',
       specialisation: doctor?.specialization || '',
       specialization: doctor?.specialization || '',
@@ -1143,7 +1248,9 @@ export async function getDoctorAuthSession() {
       averageConsultationMinutes: doctor?.average_consultation_minutes || 10,
       availability: doctor?.availability || 'available',
       loggedInAt: new Date().toISOString(),
-    };
+    });
+
+    if (!payload || !payload.doctorId) return null;
 
     try {
       if (typeof window !== 'undefined') {

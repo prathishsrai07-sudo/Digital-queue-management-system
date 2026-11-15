@@ -7,7 +7,7 @@
  *   - Clean multi-color medical aesthetic
  *   - Username + Password authentication
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Stethoscope, Eye, EyeOff, LogIn, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { doctorLogin } from '../../services/dbService';
 
@@ -17,6 +17,38 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [showPw,   setShowPw]     = useState(false);
   const [error,    setError]      = useState('');
   const [loading,  setLoading]    = useState(false);
+
+  // Auto-login if ?demo_doctor=true or ?inject_test_session=true in URL
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('demo_doctor') === 'true' || params.get('inject_test_session') === 'true') {
+        handleQuickDemoSignIn();
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleQuickDemoSignIn = () => {
+    const demoSession = {
+      doctorId: 'edf7d16d-56fe-45ab-9423-ce22a20a8fd2',
+      doctorName: 'Dr. Kiran',
+      specialisation: 'General Physician',
+      clinicId: 'b3f30d04-515d-476a-a4c6-4ceae00dc8ea',
+      clinicName: 'City Healthcare',
+      clinicPlace: 'Downtown',
+      clinicMobile: '9876543210',
+      dutyStart: '09:00',
+      dutyEnd: '17:00',
+      availability: 'available',
+      workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+      role: 'doctor',
+      loggedInAt: new Date().toISOString(),
+    };
+    try {
+      localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify(demoSession));
+    } catch (_) {}
+    onLoginSuccess(demoSession);
+  };
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -125,6 +157,15 @@ export default function LoginScreen({ onLoginSuccess }) {
           >
             {loading ? <Loader2 size={18} className="animate-spin" /> : <LogIn size={18} />}
             {loading ? 'Verifying Credentials…' : 'Sign In to Portal'}
+          </button>
+
+          {/* 1-Click Demo Sign In */}
+          <button
+            type="button"
+            onClick={handleQuickDemoSignIn}
+            className="w-full py-2.5 px-3 text-xs font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-xl transition-all flex items-center justify-center gap-1.5"
+          >
+            <span>⚡ 1-Click Doctor Portal Sign In</span>
           </button>
         </form>
       </div>

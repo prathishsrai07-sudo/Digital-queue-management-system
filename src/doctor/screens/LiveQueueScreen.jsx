@@ -129,13 +129,13 @@ export default function LiveQueueScreen({
                   Active Token
                 </span>
                 <span className="text-4xl sm:text-5xl font-black text-slate-900 tracking-wider">
-                  {activePatient.tokenNumber}
+                  {activePatient.tokenNumber || activePatient.token_number}
                 </span>
               </div>
 
               <div className="flex-1 min-w-0 border-t sm:border-t-0 sm:border-l border-slate-200/80 pt-3 sm:pt-0 sm:pl-4">
                 <div className="flex flex-wrap items-center gap-2 mb-1">
-                  <span className="text-lg font-black text-slate-900 truncate">{activePatient.patientName}</span>
+                  <span className="text-lg font-black text-slate-900 truncate">{activePatient.patientName || activePatient.name || 'Patient'}</span>
                   <StatusBadge status={activePatient.status} />
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${activePatient.bookingType === 'Phone' ? 'bg-purple-100 text-purple-700' : 'bg-emerald-100 text-emerald-700'}`}>
                     {activePatient.bookingType}
@@ -186,7 +186,7 @@ export default function LiveQueueScreen({
             {nextPatient && (
               <div className="flex items-center gap-2 text-xs text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-200/80">
                 <AlertTriangle size={15} className="text-amber-500 flex-shrink-0" />
-                <span>Next in line: <strong>{nextPatient.tokenNumber} ({nextPatient.patientName})</strong>. Finish or skip current consultation before calling next.</span>
+                <span>Next in line: <strong>{nextPatient.tokenNumber || nextPatient.token_number} ({nextPatient.patientName || nextPatient.name || 'Patient'})</strong>. Finish or skip current consultation before calling next.</span>
               </div>
             )}
           </div>
@@ -206,7 +206,7 @@ export default function LiveQueueScreen({
                   onClick={() => onAction('callNext', nextPatient.id)}
                   className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-xl text-sm font-bold shadow-md shadow-amber-500/20 hover:shadow-lg transition-all"
                 >
-                  <Bell size={17} /> Call Next Patient ({nextPatient.tokenNumber})
+                  <Bell size={17} /> Call Next Patient ({nextPatient.tokenNumber || nextPatient.token_number})
                 </button>
                 <button
                   onClick={() => onAction('start', nextPatient.id)}
@@ -251,9 +251,9 @@ export default function LiveQueueScreen({
                   {i + 1}
                 </span>
                 <span className={`font-black text-sm w-14 flex-shrink-0 ${i === 0 ? 'text-teal-900' : 'text-slate-800'}`}>
-                  {t.tokenNumber}
+                  {t.tokenNumber || t.token_number}
                 </span>
-                <span className="text-slate-800 text-sm font-semibold flex-1 truncate">{t.patientName}</span>
+                <span className="text-slate-800 text-sm font-semibold flex-1 truncate">{t.patientName || t.name || 'Patient'}</span>
                 {t.place && <span className="text-slate-400 text-xs hidden sm:block truncate max-w-[100px]">{t.place}</span>}
                 <span
                   className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full flex-shrink-0 ${
@@ -293,11 +293,11 @@ export default function LiveQueueScreen({
                   {/* Left: Patient info */}
                   <div className="flex items-start gap-3">
                     <span className="font-black text-base text-slate-800 bg-white border border-rose-200 px-2.5 py-1 rounded-lg">
-                      {t.tokenNumber}
+                      {t.tokenNumber || t.token_number}
                     </span>
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-slate-900 font-bold text-sm">{t.patientName}</span>
+                        <span className="text-slate-900 font-bold text-sm">{t.patientName || t.name || 'Patient'}</span>
                         <StatusBadge status={t.status} />
                         {timeFormatted && (
                           <span className="text-[11px] text-slate-400 flex items-center gap-1 font-medium">
