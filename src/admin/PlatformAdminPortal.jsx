@@ -48,7 +48,6 @@ import {
   getPlatformAdminSession,
   platformAdminLogin,
   platformAdminLogout,
-  changeAdminPassword,
   adminListAllClinicsAndDoctors,
   adminUpsertClinic,
   adminToggleClinicActive,
@@ -65,7 +64,7 @@ export default function PlatformAdminPortal() {
   // ── Auth State ─────────────────────────────────────────────────────────────
   const [adminUser, setAdminUser]         = useState(null);
   const [checkingAuth, setCheckingAuth]   = useState(true);
-  const [loginForm, setLoginForm]         = useState({ identifier: 'admin', password: '' });
+  const [loginForm, setLoginForm]         = useState({ identifier: '', password: '' });
   const [loginLoading, setLoginLoading]   = useState(false);
   const [loginError, setLoginError]       = useState('');
 
@@ -97,12 +96,6 @@ export default function PlatformAdminPortal() {
   });
   const [doctorSubmitting, setDoctorSubmitting] = useState(false);
   const [doctorError, setDoctorError]         = useState('');
-
-  // Change Admin Password State
-  const [showAdminPasswordModal, setShowAdminPasswordModal] = useState(false);
-  const [adminPasswordForm, setAdminPasswordForm]           = useState({ newPassword: '', confirmPassword: '' });
-  const [adminPasswordSubmitting, setAdminPasswordSubmitting] = useState(false);
-  const [adminPasswordError, setAdminPasswordError]         = useState('');
 
   // Edit Doctor Credentials State
   const [editCredsDoctorTarget, setEditCredsDoctorTarget]   = useState(null);
@@ -136,9 +129,13 @@ export default function PlatformAdminPortal() {
         const session = await getPlatformAdminSession();
         if (session?.user) {
           setAdminUser(session.user);
+        } else {
+          setLoginForm({ identifier: '', password: '' });
+          setLoginError('');
         }
       } catch (e) {
         console.error('Admin auth check failed:', e);
+        setLoginForm({ identifier: '', password: '' });
       } finally {
         setCheckingAuth(false);
       }
@@ -205,6 +202,8 @@ export default function PlatformAdminPortal() {
     await platformAdminLogout();
     setAdminUser(null);
     setClinics([]);
+    setLoginForm({ identifier: '', password: '' });
+    setLoginError('');
   };
 
   // ── 4. Clinic Actions ──────────────────────────────────────────────────────
@@ -500,36 +499,6 @@ export default function PlatformAdminPortal() {
     await loadData();
   };
 
-  const handleChangeAdminPassword = async (e) => {
-    e.preventDefault();
-    const cleanPw = adminPasswordForm.newPassword ? adminPasswordForm.newPassword.trim() : '';
-    const cleanConfirm = adminPasswordForm.confirmPassword ? adminPasswordForm.confirmPassword.trim() : '';
-
-    if (!cleanPw || cleanPw.length < 6) {
-      setAdminPasswordError('New password must be at least 6 characters long.');
-      return;
-    }
-    if (cleanPw !== cleanConfirm) {
-      setAdminPasswordError('Passwords do not match.');
-      return;
-    }
-
-    setAdminPasswordSubmitting(true);
-    setAdminPasswordError('');
-
-    const res = await changeAdminPassword(cleanPw);
-    setAdminPasswordSubmitting(false);
-
-    if (res?.error) {
-      setAdminPasswordError(res.error.message || 'Failed to update administrator password.');
-      return;
-    }
-
-    setShowAdminPasswordModal(false);
-    setAdminPasswordForm({ newPassword: '', confirmPassword: '' });
-    showFlash('Platform Administrator password updated successfully in Supabase!');
-  };
-
   const handleResetPassword = async (e) => {
     e.preventDefault();
     if (!newPassword || newPassword.length < 6) {
@@ -594,20 +563,20 @@ export default function PlatformAdminPortal() {
             </div>
           )}
 
-          <form onSubmit={handleLoginSubmit} className="flex flex-col gap-4">
+          <form onSubmit={handleLoginSubmit} autoComplete="off" className="flex flex-col gap-4">
             <div>
               <label className="text-xs font-semibold text-slate-300 block mb-1">
                 Admin Username / Identifier
               </label>
               <input
                 type="text"
-                placeholder="admin"
+                autoComplete="off"
+                placeholder="Enter administrator username"
                 value={loginForm.identifier}
                 onChange={(e) => setLoginForm(f => ({ ...f, identifier: e.target.value }))}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-all font-mono"
                 required
               />
-              <p className="text-[11px] text-slate-500 mt-1">Default administrator username: <code className="text-indigo-400">admin</code></p>
             </div>
 
             <div>
@@ -616,6 +585,7 @@ export default function PlatformAdminPortal() {
               </label>
               <input
                 type="password"
+                autoComplete="new-password"
                 placeholder="Enter administrator password"
                 value={loginForm.password}
                 onChange={(e) => setLoginForm(f => ({ ...f, password: e.target.value }))}
@@ -695,19 +665,6 @@ export default function PlatformAdminPortal() {
             >
               <RefreshCw size={14} className={loadingClinics ? 'animate-spin' : ''} />
               <span className="hidden sm:inline">Refresh</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setShowAdminPasswordModal(true);
-                setAdminPasswordForm({ newPassword: '', confirmPassword: '' });
-                setAdminPasswordError('');
-              }}
-              className="p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
-              title="Change Administrator Password"
-            >
-              <Lock size={14} className="text-amber-400" />
-              <span className="hidden sm:inline">Change Password</span>
             </button>
 
             <div className="hidden md:flex flex-col text-right">
@@ -1349,84 +1306,6 @@ export default function PlatformAdminPortal() {
                 >
                   {editCredsSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                   Save Credentials
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ── MODAL: Change Admin Password ──────────────────────────────────── */}
-      {showAdminPasswordModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-white text-base flex items-center gap-2">
-                <Lock size={18} className="text-indigo-400" />
-                Change Platform Administrator Password
-              </h3>
-              <button
-                onClick={() => setShowAdminPasswordModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-400 mb-4">
-              Enter and confirm a new password for your platform administrator account (<code>{adminUser?.email}</code>).
-            </p>
-
-            {adminPasswordError && (
-              <div className="bg-red-950/60 border border-red-800/60 rounded-xl p-3 mb-4 text-xs text-red-200">
-                {adminPasswordError}
-              </div>
-            )}
-
-            <form onSubmit={handleChangeAdminPassword} className="flex flex-col gap-4">
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  New Password * (min 6 characters)
-                </label>
-                <input
-                  type="password"
-                  placeholder="Enter new administrator password"
-                  value={adminPasswordForm.newPassword}
-                  onChange={(e) => setAdminPasswordForm(f => ({ ...f, newPassword: e.target.value }))}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  Confirm New Password *
-                </label>
-                <input
-                  type="password"
-                  placeholder="Re-enter new administrator password"
-                  value={adminPasswordForm.confirmPassword}
-                  onChange={(e) => setAdminPasswordForm(f => ({ ...f, confirmPassword: e.target.value }))}
-                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setShowAdminPasswordModal(false)}
-                  className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold hover:bg-slate-800"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={adminPasswordSubmitting}
-                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2"
-                >
-                  {adminPasswordSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                  Update Admin Password
                 </button>
               </div>
             </form>

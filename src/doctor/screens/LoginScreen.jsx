@@ -7,7 +7,7 @@
  *   - Clean multi-color medical aesthetic
  *   - Username + Password authentication
  */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Stethoscope, Eye, EyeOff, LogIn, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import { doctorLogin } from '../../services/dbService';
 
@@ -17,6 +17,12 @@ export default function LoginScreen({ onLoginSuccess }) {
   const [showPw,   setShowPw]     = useState(false);
   const [error,    setError]      = useState('');
   const [loading,  setLoading]    = useState(false);
+
+  useEffect(() => {
+    setUsername('');
+    setPassword('');
+    setError('');
+  }, []);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -35,6 +41,8 @@ export default function LoginScreen({ onLoginSuccess }) {
       return;
     }
 
+    setUsername('');
+    setPassword('');
     onLoginSuccess(data);
   };
 
@@ -66,7 +74,7 @@ export default function LoginScreen({ onLoginSuccess }) {
         <h2 className="text-xl font-extrabold text-slate-900 mb-1 tracking-tight">Doctor Sign In</h2>
         <p className="text-xs text-slate-500 mb-6">Enter your doctor username and assigned password.</p>
 
-        <form onSubmit={handleLogin} className="flex flex-col gap-4">
+        <form onSubmit={handleLogin} autoComplete="off" className="flex flex-col gap-4">
           {/* Username */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-slate-700 uppercase tracking-wider" htmlFor="username">
@@ -75,7 +83,7 @@ export default function LoginScreen({ onLoginSuccess }) {
             <input
               id="username"
               type="text"
-              autoComplete="username"
+              autoComplete="off"
               placeholder="e.g. arun.kumar"
               value={username}
               onChange={e => { setUsername(e.target.value); setError(''); }}
@@ -92,7 +100,7 @@ export default function LoginScreen({ onLoginSuccess }) {
               <input
                 id="password"
                 type={showPw ? 'text' : 'password'}
-                autoComplete="current-password"
+                autoComplete="new-password"
                 placeholder="Enter assigned password"
                 value={password}
                 onChange={e => { setPassword(e.target.value); setError(''); }}
