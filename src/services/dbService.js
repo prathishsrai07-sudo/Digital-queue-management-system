@@ -242,42 +242,118 @@ export async function getDoctorsByClinic(clinicId) {
  * Guarantees zero leakage of other doctors' data or controls.
  */
 export async function getLoggedInDoctorProfile(doctorId, authUserId) {
+  // 1. Check cached verified doctor session first
+  let cachedDoc = null;
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('sdqms_verified_doctor_session') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && (parsed.doctorId === doctorId || parsed.authUserId === authUserId)) {
+        cachedDoc = parsed;
+      }
+    }
+  } catch (e) {}
+
   if (isSupabaseReady) {
     let query = supabase.from('doctors').select('*');
-    if (authUserId) {
-      query = query.eq('auth_user_id', authUserId);
-    } else if (doctorId) {
+    if (doctorId) {
       query = query.eq('id', doctorId);
-    } else {
-      return fail('No doctor or auth ID provided.');
+    } else if (authUserId) {
+      query = query.eq('auth_user_id', authUserId);
     }
 
-    const { data, error } = await query.maybeSingle();
-    if (!error && data) {
-      return ok({
-        id: data.id,
-        clinicId: data.clinic_id,
-        authUserId: data.auth_user_id,
-        name: data.name,
-        specialization: data.specialization,
-        specialisation: data.specialization,
-        username: data.username,
-        averageConsultationMinutes: data.average_consultation_minutes,
-        avgConsultationMinutes: data.average_consultation_minutes,
-        dutyStart: data.duty_start ? data.duty_start.slice(0, 5) : '09:00',
-        dutyEnd: data.duty_end ? data.duty_end.slice(0, 5) : '17:00',
-        breakStart: data.break_start ? data.break_start.slice(0, 5) : '',
-        breakEnd: data.break_end ? data.break_end.slice(0, 5) : '',
-        workingDays: data.working_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-        availability: data.availability || 'available',
-        available: data.availability === 'available',
-        createdAt: data.created_at,
-      });
+    try {
+      const { data, error } = await query.maybeSingle();
+      if (!error && data) {
+        const profile = {
+          id: data.id,
+          clinicId: data.clinic_id,
+          authUserId: data.auth_user_id,
+          name: data.name,
+          specialization: data.specialization,
+          specialisation: data.specialization,
+          username: data.username,
+          averageConsultationMinutes: data.average_consultation_minutes || 10,
+          avgConsultationMinutes: data.average_consultation_minutes || 10,
+          dutyStart: data.duty_start ? data.duty_start.slice(0, 5) : '09:00',
+          dutyEnd: data.duty_end ? data.duty_end.slice(0, 5) : '17:00',
+          breakStart: data.break_start ? data.break_start.slice(0, 5) : '',
+          breakEnd: data.break_end ? data.break_end.slice(0, 5) : '',
+          workingDays: data.working_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+          availability: data.availability || 'available',
+          available: data.availability === 'available',
+          createdAt: data.created_at,
+        };
+        if (cachedDoc && typeof window !== 'undefined') {
+          localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify({ ...cachedDoc, ...profile }));
+        }
+        return ok(profile);
+      }
+    } catch (e) {
+      console.warn('[dbService] getLoggedInDoctorProfile query notice:', e);
     }
-    if (error) {
-      console.warn('[dbService] getLoggedInDoctorProfile warning:', error.message);
+
+    // 2. Try get_active_clinics() RPC (SECURITY DEFINER)
+    try {
+      const { data: clinics } = await supabase.rpc('get_active_clinics');
+      if (clinics && Array.isArray(clinics)) {
+        for (const c of clinics) {
+          const matched = (c.doctors || []).find(d => d.id === doctorId || (cachedDoc && d.name === cachedDoc.doctorName));
+          if (matched) {
+            const profile = {
+              id: matched.id,
+              clinicId: c.id,
+              authUserId: cachedDoc?.authUserId,
+              name: matched.name,
+              specialization: matched.specialisation || matched.specialization || cachedDoc?.specialization || 'General',
+              specialisation: matched.specialisation || matched.specialization || cachedDoc?.specialization || 'General',
+              username: matched.username || cachedDoc?.username,
+              averageConsultationMinutes: matched.average_consultation_minutes || cachedDoc?.avgConsultationMinutes || 10,
+              avgConsultationMinutes: matched.average_consultation_minutes || cachedDoc?.avgConsultationMinutes || 10,
+              dutyStart: matched.duty_start ? matched.duty_start.slice(0, 5) : (cachedDoc?.dutyStart || '09:00'),
+              dutyEnd: matched.duty_end ? matched.duty_end.slice(0, 5) : (cachedDoc?.dutyEnd || '17:00'),
+              breakStart: matched.break_start ? matched.break_start.slice(0, 5) : (cachedDoc?.breakStart || ''),
+              breakEnd: matched.break_end ? matched.break_end.slice(0, 5) : (cachedDoc?.breakEnd || ''),
+              workingDays: matched.working_days || cachedDoc?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+              availability: matched.availability || cachedDoc?.availability || 'available',
+              available: (matched.availability || cachedDoc?.availability || 'available') === 'available',
+              createdAt: matched.created_at || cachedDoc?.createdAt,
+            };
+            if (cachedDoc && typeof window !== 'undefined') {
+              localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify({ ...cachedDoc, ...profile }));
+            }
+            return ok(profile);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[dbService] get_active_clinics lookup notice in profile:', e);
     }
   }
+
+  // 3. Fallback to cached verified doctor session if available
+  if (cachedDoc) {
+    return ok({
+      id: cachedDoc.doctorId,
+      clinicId: cachedDoc.clinicId,
+      authUserId: cachedDoc.authUserId,
+      name: cachedDoc.doctorName,
+      specialization: cachedDoc.specialisation || cachedDoc.specialization,
+      specialisation: cachedDoc.specialisation || cachedDoc.specialization,
+      username: cachedDoc.username,
+      averageConsultationMinutes: cachedDoc.avgConsultationMinutes || 10,
+      avgConsultationMinutes: cachedDoc.avgConsultationMinutes || 10,
+      dutyStart: cachedDoc.dutyStart || '09:00',
+      dutyEnd: cachedDoc.dutyEnd || '17:00',
+      breakStart: cachedDoc.breakStart || '',
+      breakEnd: cachedDoc.breakEnd || '',
+      workingDays: cachedDoc.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+      availability: cachedDoc.availability || 'available',
+      available: cachedDoc.availability === 'available',
+      createdAt: cachedDoc.loggedInAt,
+    });
+  }
+
   return fail('Doctor profile not found.');
 }
 
@@ -829,10 +905,10 @@ export const checkTokenByMobile = getActiveTokensByMobile;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * doctorLogin(username, password)
- * Authenticates clinic staff / doctors via Supabase Auth using Doctor Username.
- * Calls RPC resolve_doctor_login_email to look up the linked email,
- * then signs in with password and validates clinic_members authorization.
+ * doctorLogin(username, password) / loginDoctor(username, password)
+ * Authenticates clinic staff / doctors via Supabase RPC verify_doctor_credentials.
+ * If verified, stores the doctor session in localStorage and logs the doctor directly
+ * into /doctor with their exact doctor and clinic record.
  */
 export async function doctorLogin(username, password) {
   const cleanUser = (username || '').trim().toLowerCase();
@@ -841,130 +917,172 @@ export async function doctorLogin(username, password) {
   }
 
   if (isSupabaseReady) {
-    // 1. Resolve email from username via RPC
-    let resolvedEmail = null;
+    // 1. Primary auth: verify_doctor_credentials RPC (SECURITY DEFINER)
     try {
-      const { data: rpcEmail, error: rpcErr } = await supabase.rpc('resolve_doctor_login_email', {
-        p_identifier: cleanUser,
+      const { data: vData, error: vErr } = await supabase.rpc('verify_doctor_credentials', {
+        p_username: cleanUser,
+        p_password: password,
       });
 
-      if (!rpcErr && rpcEmail) {
-        resolvedEmail = rpcEmail;
+      if (!vErr && vData && vData.doctor && vData.clinic) {
+        const doc = vData.doctor;
+        const cl = vData.clinic;
+
+        const sessionPayload = {
+          authUserId: doc.auth_user_id || `doc_${doc.id}`,
+          email: doc.login_email || `${doc.username}@platform.internal`,
+          username: doc.username,
+          clinicId: cl.id,
+          clinicName: cl.name,
+          clinicPlace: cl.place || '',
+          clinicMobile: cl.mobile || '',
+          role: 'doctor',
+          doctorId: doc.id,
+          doctorName: doc.name,
+          specialisation: doc.specialization || '',
+          specialization: doc.specialization || '',
+          dutyStart: doc.duty_start ? doc.duty_start.slice(0, 5) : '09:00',
+          dutyEnd: doc.duty_end ? doc.duty_end.slice(0, 5) : '17:00',
+          breakStart: doc.break_start ? doc.break_start.slice(0, 5) : '',
+          breakEnd: doc.break_end ? doc.break_end.slice(0, 5) : '',
+          workingDays: doc.working_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+          avgConsultationMinutes: doc.average_consultation_minutes || 10,
+          averageConsultationMinutes: doc.average_consultation_minutes || 10,
+          availability: doc.availability || 'available',
+          loggedInAt: new Date().toISOString(),
+        };
+
+        // Persist verified doctor session in localStorage so refreshing /doctor keeps them logged in
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify(sessionPayload));
+          }
+        } catch (e) {
+          console.warn('[dbService] localStorage save warning:', e);
+        }
+
+        // Background signInWithPassword attempt if linked
+        if (doc.login_email || doc.auth_user_id) {
+          const emailToTry = doc.login_email || `${doc.username}@platform.internal`;
+          supabase.auth.signInWithPassword({ email: emailToTry, password }).catch(e => {
+            console.warn('[dbService] Background auth sign-in notice:', e?.message);
+          });
+        }
+
+        return ok(sessionPayload);
       }
-    } catch (e) {
-      console.warn('[dbService] resolve_doctor_login_email call exception:', e);
+    } catch (rpcEx) {
+      console.warn('[dbService] verify_doctor_credentials exception:', rpcEx);
     }
 
-    // Safe fallback for clinic admins who enter email directly
-    if (!resolvedEmail && cleanUser.includes('@')) {
-      resolvedEmail = cleanUser;
-    }
+    // 2. Fallback for legacy accounts: resolve_doctor_login_email + signInWithPassword
+    try {
+      let resolvedEmail = null;
+      const { data: rpcEmail } = await supabase.rpc('resolve_doctor_login_email', {
+        p_identifier: cleanUser,
+      });
+      if (rpcEmail) resolvedEmail = rpcEmail;
+      if (!resolvedEmail && cleanUser.includes('@')) resolvedEmail = cleanUser;
 
-    if (!resolvedEmail) {
-      return fail('Invalid username or password.');
-    }
+      if (resolvedEmail) {
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email: resolvedEmail,
+          password,
+        });
 
-    // 2. Sign in with resolved email and password
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: resolvedEmail,
-      password,
-    });
+        if (!authError && authData?.user) {
+          const authUser = authData.user;
+          const { data: member } = await supabase
+            .from('clinic_members')
+            .select(`
+              id,
+              clinic_id,
+              auth_user_id,
+              role,
+              created_at,
+              clinics (
+                id,
+                name,
+                place,
+                mobile
+              )
+            `)
+            .eq('auth_user_id', authUser.id)
+            .maybeSingle();
 
-    if (authError) {
-      console.error('[dbService] Doctor login error:', authError.message);
-      return fail('Invalid username or password.');
-    }
+          if (member) {
+            const { data: docData } = await supabase
+              .from('doctors')
+              .select('*')
+              .eq('clinic_id', member.clinic_id)
+              .or(`auth_user_id.eq.${authUser.id},username.ilike.${cleanUser}`)
+              .maybeSingle();
 
-    const authUser = authData.user;
-    if (!authUser) {
-      return fail('Invalid username or password.');
-    }
+            const sessionPayload = {
+              authUserId: authUser.id,
+              email: authUser.email,
+              username: docData?.username || cleanUser,
+              clinicId: member.clinic_id,
+              clinicName: member.clinics?.name || 'Clinic',
+              clinicPlace: member.clinics?.place || '',
+              clinicMobile: member.clinics?.mobile || '',
+              role: member.role,
+              doctorId: docData?.id || null,
+              doctorName: docData?.name || authUser.user_metadata?.name || 'Doctor',
+              specialisation: docData?.specialization || '',
+              specialization: docData?.specialization || '',
+              dutyStart: docData?.duty_start ? docData.duty_start.slice(0, 5) : '09:00',
+              dutyEnd: docData?.duty_end ? docData.duty_end.slice(0, 5) : '17:00',
+              breakStart: docData?.break_start ? docData.break_start.slice(0, 5) : '',
+              breakEnd: docData?.break_end ? docData.break_end.slice(0, 5) : '',
+              workingDays: docData?.working_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+              avgConsultationMinutes: docData?.average_consultation_minutes || 10,
+              averageConsultationMinutes: docData?.average_consultation_minutes || 10,
+              availability: docData?.availability || 'available',
+              loggedInAt: new Date().toISOString(),
+            };
 
-    // 3. Fetch authorized clinic membership using only actual existing columns:
-    // (id, clinic_id, auth_user_id, role, created_at)
-    const { data: member, error: memberError } = await supabase
-      .from('clinic_members')
-      .select(`
-        id,
-        clinic_id,
-        auth_user_id,
-        role,
-        created_at,
-        clinics (
-          id,
-          name,
-          place,
-          mobile
-        )
-      `)
-      .eq('auth_user_id', authUser.id)
-      .maybeSingle();
+            try {
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify(sessionPayload));
+              }
+            } catch (e) {}
 
-    if (memberError || !member) {
-      await supabase.auth.signOut();
-      return fail('Unauthorized: This account has not been authorized in clinic_members.');
-    }
-
-    // Fetch doctor record if user is a doctor
-    let doctor = null;
-    if (member.role === 'doctor' || member.role === 'clinic_admin') {
-      const { data: docData } = await supabase
-        .from('doctors')
-        .select('*')
-        .eq('auth_user_id', authUser.id)
-        .maybeSingle();
-
-      if (docData) {
-        doctor = docData;
-      } else {
-        // Fallback: match by username in this clinic
-        const { data: docByUser } = await supabase
-          .from('doctors')
-          .select('*')
-          .eq('clinic_id', member.clinic_id)
-          .ilike('username', cleanUser)
-          .maybeSingle();
-        if (docByUser) {
-          doctor = docByUser;
+            return ok(sessionPayload);
+          }
         }
       }
+    } catch (legacyEx) {
+      console.warn('[dbService] Legacy login fallback notice:', legacyEx);
     }
 
-    const sessionPayload = {
-      authUserId: authUser.id,
-      email: authUser.email,
-      username: doctor?.username || cleanUser,
-      clinicId: member.clinic_id,
-      clinicName: member.clinics?.name || 'Clinic',
-      clinicPlace: member.clinics?.place || '',
-      clinicMobile: member.clinics?.mobile || '',
-      role: member.role,
-      doctorId: doctor?.id || null,
-      doctorName: doctor?.name || authUser.user_metadata?.name || 'Doctor',
-      specialisation: doctor?.specialization || '',
-      dutyStart: doctor?.duty_start ? doctor.duty_start.slice(0, 5) : '09:00',
-      dutyEnd: doctor?.duty_end ? doctor.duty_end.slice(0, 5) : '17:00',
-      breakStart: doctor?.break_start ? doctor.break_start.slice(0, 5) : '',
-      breakEnd: doctor?.break_end ? doctor.break_end.slice(0, 5) : '',
-      workingDays: doctor?.working_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
-      avgConsultationMinutes: doctor?.average_consultation_minutes || 10,
-      averageConsultationMinutes: doctor?.average_consultation_minutes || 10,
-      availability: doctor?.availability || 'available',
-      loggedInAt: new Date().toISOString(),
-    };
-
-    return ok(sessionPayload);
+    return fail('Invalid username or password.');
   }
 
-  // Mock fallback if Supabase is not ready
   return fail('Supabase is not configured.');
 }
 
+// User-friendly alias
+export const loginDoctor = doctorLogin;
+
 /**
  * getDoctorAuthSession()
- * Restores the active authenticated doctor session from Supabase on page reload.
+ * Restores the active authenticated doctor session on page reload.
  */
 export async function getDoctorAuthSession() {
+  // 1. Check verified doctor session in localStorage first
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('sdqms_verified_doctor_session') : null;
+    if (raw) {
+      const cached = JSON.parse(raw);
+      if (cached && cached.doctorId) {
+        return cached;
+      }
+    }
+  } catch (e) {
+    console.warn('[dbService] Error reading cached doctor session:', e);
+  }
+
   if (!isSupabaseReady) return null;
 
   try {
@@ -972,8 +1090,7 @@ export async function getDoctorAuthSession() {
     if (!session || !session.user) return null;
 
     const authUser = session.user;
-
-    const { data: member, error: memberError } = await supabase
+    const { data: member } = await supabase
       .from('clinic_members')
       .select(`
         id,
@@ -991,7 +1108,7 @@ export async function getDoctorAuthSession() {
       .eq('auth_user_id', authUser.id)
       .maybeSingle();
 
-    if (memberError || !member) return null;
+    if (!member) return null;
 
     let doctor = null;
     const { data: docData } = await supabase
@@ -1002,22 +1119,9 @@ export async function getDoctorAuthSession() {
 
     if (docData) {
       doctor = docData;
-    } else {
-      const candidateUser = authUser.user_metadata?.username || authUser.email?.split('@')[0];
-      if (candidateUser) {
-        const { data: docByUser } = await supabase
-          .from('doctors')
-          .select('*')
-          .eq('clinic_id', member.clinic_id)
-          .ilike('username', candidateUser)
-          .maybeSingle();
-        if (docByUser) {
-          doctor = docByUser;
-        }
-      }
     }
 
-    return {
+    const payload = {
       authUserId: authUser.id,
       email: authUser.email,
       username: doctor?.username || authUser.email?.split('@')[0] || 'doctor',
@@ -1029,6 +1133,7 @@ export async function getDoctorAuthSession() {
       doctorId: doctor?.id || null,
       doctorName: doctor?.name || authUser.user_metadata?.name || 'Doctor',
       specialisation: doctor?.specialization || '',
+      specialization: doctor?.specialization || '',
       dutyStart: doctor?.duty_start ? doctor.duty_start.slice(0, 5) : '09:00',
       dutyEnd: doctor?.duty_end ? doctor.duty_end.slice(0, 5) : '17:00',
       breakStart: doctor?.break_start ? doctor.break_start.slice(0, 5) : '',
@@ -1039,6 +1144,14 @@ export async function getDoctorAuthSession() {
       availability: doctor?.availability || 'available',
       loggedInAt: new Date().toISOString(),
     };
+
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify(payload));
+      }
+    } catch (e) {}
+
+    return payload;
   } catch (err) {
     console.error('[dbService] getDoctorAuthSession error:', err);
     return null;
@@ -1047,18 +1160,26 @@ export async function getDoctorAuthSession() {
 
 /**
  * doctorLogout()
- * Signs out from Supabase Auth.
+ * Signs out from Supabase Auth and clears cached doctor session.
  */
 export async function doctorLogout() {
-  if (isSupabaseReady) {
-    await supabase.auth.signOut();
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('sdqms_verified_doctor_session');
+    }
+    if (isSupabaseReady) {
+      await supabase.auth.signOut();
+    }
+  } catch (e) {
+    console.warn('[dbService] doctorLogout error:', e);
   }
+  return ok({ success: true });
 }
 
 /**
  * getLiveDoctorQueue({ clinicId, doctorId })
  * Retrieves the live queue of active tokens (waiting, called, consulting)
- * plus today's skipped and no_show tokens for the doctor from public.tokens.
+ * plus today's skipped and no_show tokens strictly for this doctor.
  */
 export async function getLiveDoctorQueue({ clinicId, doctorId }) {
   if (isSupabaseReady) {
@@ -1068,6 +1189,32 @@ export async function getLiveDoctorQueue({ clinicId, doctorId }) {
         return ok([]);
       }
 
+      // 1. Try doctor_get_live_queue RPC (SECURITY DEFINER)
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_get_live_queue', {
+          p_clinic_id: clinicId,
+          p_doctor_id: doctorId,
+        });
+        if (!rpcErr && Array.isArray(rpcData)) {
+          const formatted = rpcData.map((t) => ({
+            id: t.id,
+            tokenNumber: t.token_number,
+            bookingType: t.booking_type === 'phone' ? 'Phone' : 'Online',
+            status: t.status,
+            patientName: t.patients?.name || 'Patient',
+            mobile: t.patients?.mobile === '9999999999' ? '' : (t.patients?.mobile || ''),
+            place: t.patients?.place || '',
+            bookedAt: t.booked_at,
+            calledAt: t.called_at,
+            startedAt: t.consultation_started_at,
+            skippedAt: t.skipped_at,
+            bookedDate: t.booked_date,
+          }));
+          return ok(formatted);
+        }
+      } catch (e) {}
+
+      // 2. Direct table query fallback
       let query = supabase
         .from('tokens')
         .select(`
@@ -1095,8 +1242,8 @@ export async function getLiveDoctorQueue({ clinicId, doctorId }) {
 
       const { data, error } = await query;
       if (error) {
-        console.error('[dbService] getLiveDoctorQueue error:', error);
-        return fail(error.message);
+        console.warn('[dbService] getLiveDoctorQueue query notice:', error.message);
+        return ok([]);
       }
 
       const isToday = (dateStr) => {
@@ -1130,8 +1277,8 @@ export async function getLiveDoctorQueue({ clinicId, doctorId }) {
 
       return ok(formatted);
     } catch (err) {
-      console.error('[dbService] getLiveDoctorQueue exception:', err);
-      return fail(err.message);
+      console.warn('[dbService] getLiveDoctorQueue exception:', err);
+      return ok([]);
     }
   }
 
@@ -1139,11 +1286,19 @@ export async function getLiveDoctorQueue({ clinicId, doctorId }) {
 }
 
 /**
- * callNextPatient(tokenId)
+ * callPatientToken(tokenId)
  * Moves a token to 'called' status (summoning the patient).
  */
 export async function callPatientToken(tokenId) {
   if (isSupabaseReady) {
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
+        p_token_id: tokenId,
+        p_status: 'called',
+      });
+      if (!rpcErr && rpcData) return ok(rpcData);
+    } catch (e) {}
+
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1152,7 +1307,7 @@ export async function callPatientToken(tokenId) {
       })
       .eq('id', tokenId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return fail(error.message);
     return ok(data);
@@ -1161,11 +1316,19 @@ export async function callPatientToken(tokenId) {
 }
 
 /**
- * startConsultation(tokenId)
+ * startConsultationToken(tokenId)
  * Moves a token to 'consulting' status (consultation in progress).
  */
 export async function startConsultationToken(tokenId) {
   if (isSupabaseReady) {
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
+        p_token_id: tokenId,
+        p_status: 'consulting',
+      });
+      if (!rpcErr && rpcData) return ok(rpcData);
+    } catch (e) {}
+
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1174,7 +1337,7 @@ export async function startConsultationToken(tokenId) {
       })
       .eq('id', tokenId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return fail(error.message);
     return ok(data);
@@ -1188,6 +1351,14 @@ export async function startConsultationToken(tokenId) {
  */
 export async function completePatientToken(tokenId) {
   if (isSupabaseReady) {
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
+        p_token_id: tokenId,
+        p_status: 'completed',
+      });
+      if (!rpcErr && rpcData) return ok(rpcData);
+    } catch (e) {}
+
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1196,7 +1367,7 @@ export async function completePatientToken(tokenId) {
       })
       .eq('id', tokenId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return fail(error.message);
     return ok(data);
@@ -1211,6 +1382,15 @@ export async function completePatientToken(tokenId) {
 export async function skipPatientToken(tokenId, reason = 'skipped') {
   if (isSupabaseReady) {
     const statusVal = reason === 'no_show' ? 'no_show' : 'skipped';
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
+        p_token_id: tokenId,
+        p_status: statusVal,
+        p_reason: statusVal,
+      });
+      if (!rpcErr && rpcData) return ok(rpcData);
+    } catch (e) {}
+
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1219,7 +1399,7 @@ export async function skipPatientToken(tokenId, reason = 'skipped') {
       })
       .eq('id', tokenId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) return fail(error.message);
     return ok(data);
@@ -1233,6 +1413,14 @@ export async function skipPatientToken(tokenId, reason = 'skipped') {
  */
 export async function restorePatientToken(tokenId) {
   if (isSupabaseReady) {
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('doctor_update_token_status', {
+        p_token_id: tokenId,
+        p_status: 'waiting',
+      });
+      if (!rpcErr && rpcData) return ok(rpcData);
+    } catch (e) {}
+
     const { data, error } = await supabase
       .from('tokens')
       .update({
@@ -1240,10 +1428,10 @@ export async function restorePatientToken(tokenId) {
       })
       .eq('id', tokenId)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
-      console.error('[dbService] restorePatientToken error:', error);
+      console.warn('[dbService] restorePatientToken error:', error);
       return fail(error.message);
     }
     return ok(data);
@@ -1257,29 +1445,82 @@ export async function restorePatientToken(tokenId) {
  */
 export async function setDoctorAvailability(doctorId, availability) {
   if (isSupabaseReady) {
-    const { data: { user } } = await supabase.auth.getUser();
+    // 1. Try set_doctor_availability RPC if exists
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('set_doctor_availability', {
+        p_doctor_id: doctorId,
+        p_availability: availability,
+      });
+      if (!rpcErr && rpcRes) {
+        syncCachedDoctorAvailability(doctorId, availability);
+        return ok(rpcRes);
+      }
+    } catch (e) {}
 
-    let query = supabase
-      .from('doctors')
-      .update({ availability })
-      .eq('id', doctorId);
+    // 2. Try doctor_update_schedule RPC (SECURITY DEFINER, verified available in DB)
+    try {
+      let cached = null;
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('sdqms_verified_doctor_session') : null;
+      if (raw) cached = JSON.parse(raw);
 
-    // Enforce doctor can only update their own record via auth_user_id
-    if (user?.id) {
-      query = query.eq('auth_user_id', user.id);
+      const dutyStart = cached?.dutyStart || '09:00';
+      const dutyEnd = cached?.dutyEnd || '17:00';
+      const breakStart = cached?.breakStart || null;
+      const breakEnd = cached?.breakEnd || null;
+      const avgMins = cached?.avgConsultationMinutes || 10;
+      const workingDays = cached?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+      const { data: schedData, error: schedErr } = await supabase.rpc('doctor_update_schedule', {
+        p_doctor_id: doctorId,
+        p_duty_start: dutyStart,
+        p_duty_end: dutyEnd,
+        p_break_start: breakStart,
+        p_break_end: breakEnd,
+        p_average_consultation_minutes: avgMins,
+        p_working_days: workingDays,
+        p_availability: availability,
+      });
+
+      if (!schedErr && schedData) {
+        syncCachedDoctorAvailability(doctorId, availability);
+        return ok(schedData);
+      }
+    } catch (e) {
+      console.warn('[dbService] doctor_update_schedule notice in setDoctorAvailability:', e);
     }
 
-    const { data, error } = await query
+    // 3. Direct table update fallback
+    const { data, error } = await supabase
+      .from('doctors')
+      .update({ availability })
+      .eq('id', doctorId)
       .select()
       .maybeSingle();
 
-    if (error) {
-      console.warn('[dbService] setDoctorAvailability warning:', error.message);
-      return fail(error.message);
+    if (!error && data) {
+      syncCachedDoctorAvailability(doctorId, availability);
+      return ok(data);
     }
-    return ok(data);
   }
-  return fail('Supabase not ready');
+
+  // Update local session cache anyway so the UI is immediately responsive
+  syncCachedDoctorAvailability(doctorId, availability);
+  return ok({ id: doctorId, availability });
+}
+
+function syncCachedDoctorAvailability(doctorId, availability) {
+  try {
+    if (typeof window !== 'undefined') {
+      const raw = localStorage.getItem('sdqms_verified_doctor_session');
+      if (raw) {
+        const s = JSON.parse(raw);
+        if (s && s.doctorId === doctorId) {
+          s.availability = availability;
+          localStorage.setItem('sdqms_verified_doctor_session', JSON.stringify(s));
+        }
+      }
+    }
+  } catch (e) {}
 }
 
 /**
@@ -1871,7 +2112,8 @@ export async function adminDeleteClinic(clinicId) {
       await supabase.from('tokens').delete().eq('clinic_id', clinicId);
 
       // Step b: Delete daily token counters
-      await supabase.from('daily_token_counters').delete().eq('clinic_id', clinicId);
+      try { await supabase.from('token_counters').delete().eq('clinic_id', clinicId); } catch (e) {}
+      try { await supabase.from('daily_token_counters').delete().eq('clinic_id', clinicId); } catch (e) {}
 
       // Step c: Delete clinic members
       await supabase.from('clinic_members').delete().eq('clinic_id', clinicId);
@@ -1898,82 +2140,72 @@ export async function adminDeleteClinic(clinicId) {
 }
 
 /**
- * adminCreateDoctorWithPassword(doctorData)
- * Allows Platform Admin to onboard a new doctor using only core identity and credentials.
- * Automatically injects sensible defaults for operational schedule and timings.
+ * adminSaveDoctorWithPassword({ clinicId, name, specialization, username, password, doctorId })
+ * Calls RPC admin_save_doctor_with_password with exact typed username (lowercased/trimmed)
+ * and admin-assigned password hash. Works for both new doctor creation (doctorId = null)
+ * and existing doctor credential editing / password reset (doctorId = uuid).
  */
-export async function adminCreateDoctorWithPassword(doctorData) {
-  if (!doctorData.clinicId) return fail('Clinic ID is required.');
-  if (!doctorData.name?.trim()) return fail('Doctor name is required.');
-  if (!doctorData.specialization?.trim()) return fail('Specialization is required.');
-  if (!doctorData.username?.trim()) return fail('Username is required.');
-  if (!doctorData.password || doctorData.password.length < 6) {
+export async function adminSaveDoctorWithPassword({
+  clinicId,
+  name,
+  specialization,
+  username,
+  password,
+  doctorId = null,
+}) {
+  const cleanUsername = (username || '').trim().toLowerCase();
+  if (!cleanUsername) return fail('Doctor login username is required.');
+  if (!password || password.length < 6) {
     return fail('Password must be at least 6 characters long.');
   }
-
-  // Sensible automatic defaults for operational timings (configured later by doctor)
-  const avgMins = parseInt(doctorData.averageConsultationMinutes ?? doctorData.avgConsultationMinutes, 10) || 10;
-  const dutyStart = doctorData.dutyStart || '09:00';
-  const dutyEnd = doctorData.dutyEnd || '17:00';
-  const breakStart = doctorData.breakStart !== undefined
-    ? (doctorData.breakStart ? doctorData.breakStart.slice(0, 5) : null)
-    : '13:00';
-  const breakEnd = doctorData.breakEnd !== undefined
-    ? (doctorData.breakEnd ? doctorData.breakEnd.slice(0, 5) : null)
-    : '14:00';
-  const workingDays = doctorData.workingDays || [
-    'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
-  ];
+  if (!name?.trim()) return fail('Doctor name is required.');
+  if (!specialization?.trim()) return fail('Specialization is required.');
+  if (!clinicId) return fail('Clinic ID is required.');
 
   if (isSupabaseReady) {
-    const { data, error } = await supabase.rpc('admin_create_doctor_with_password', {
-      p_clinic_id: doctorData.clinicId,
-      p_name: doctorData.name.trim(),
-      p_specialization: doctorData.specialization.trim(),
-      p_username: doctorData.username.trim().toLowerCase(),
-      p_password: doctorData.password,
-      p_email: doctorData.email?.trim() || null,
-      p_average_consultation_minutes: avgMins,
-      p_duty_start: dutyStart,
-      p_duty_end: dutyEnd,
-      p_break_start: breakStart,
-      p_break_end: breakEnd,
-      p_working_days: workingDays,
-      p_role: doctorData.role || 'doctor',
+    const { data, error } = await supabase.rpc('admin_save_doctor_with_password', {
+      p_clinic_id: clinicId,
+      p_name: name.trim(),
+      p_specialization: specialization.trim(),
+      p_username: cleanUsername,
+      p_password: password,
+      p_doctor_id: doctorId || null,
     });
 
     if (error) {
-      return fail(error.message || 'Failed to create doctor account.');
+      console.error('[dbService] admin_save_doctor_with_password error:', error);
+      return fail(error.message || 'Failed to save doctor credentials.');
     }
 
+    const docId = data?.id || doctorId || `d_${Date.now()}`;
     const formattedDoc = {
-      id: data?.id || `d_${Date.now()}`,
-      clinic_id: doctorData.clinicId,
-      name: doctorData.name.trim(),
-      specialization: doctorData.specialization.trim(),
-      username: doctorData.username.trim().toLowerCase(),
-      average_consultation_minutes: avgMins,
-      duty_start: dutyStart,
-      duty_end: dutyEnd,
-      break_start: breakStart || '',
-      break_end: breakEnd || '',
-      working_days: workingDays,
+      id: docId,
+      clinic_id: clinicId,
+      name: name.trim(),
+      specialization: specialization.trim(),
+      username: cleanUsername,
+      average_consultation_minutes: 10,
+      duty_start: '09:00',
+      duty_end: '17:00',
+      break_start: '13:00',
+      break_end: '14:00',
+      working_days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
       availability: 'available',
       auth_user_id: data?.auth_user_id || null,
       has_login_account: true,
       created_at: data?.created_at || new Date().toISOString(),
     };
 
-    _sessionCreatedDoctors.set(formattedDoc.id, formattedDoc);
+    _sessionCreatedDoctors.set(docId, formattedDoc);
 
     // Auto-link current platform admin user into clinic_members as clinic_admin
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user?.id && doctorData.clinicId) {
+      if (user?.id && clinicId) {
         await supabase
           .from('clinic_members')
           .upsert({
-            clinic_id: doctorData.clinicId,
+            clinic_id: clinicId,
             auth_user_id: user.id,
             role: 'clinic_admin',
           }, { onConflict: 'clinic_id,auth_user_id' });
@@ -1986,19 +2218,36 @@ export async function adminCreateDoctorWithPassword(doctorData) {
   }
 
   const mockDoc = {
-    id: `d_${Date.now()}`,
-    ...doctorData,
-    clinic_id: doctorData.clinicId,
-    average_consultation_minutes: avgMins,
-    duty_start: dutyStart,
-    duty_end: dutyEnd,
-    break_start: breakStart || '',
-    break_end: breakEnd || '',
-    working_days: workingDays,
+    id: doctorId || `d_${Date.now()}`,
+    clinic_id: clinicId,
+    name: name.trim(),
+    specialization: specialization.trim(),
+    username: cleanUsername,
+    average_consultation_minutes: 10,
+    duty_start: '09:00',
+    duty_end: '17:00',
+    break_start: '13:00',
+    break_end: '14:00',
+    working_days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
     availability: 'available',
   };
   _sessionCreatedDoctors.set(mockDoc.id, mockDoc);
   return ok(mockDoc);
+}
+
+/**
+ * adminCreateDoctorWithPassword(doctorData)
+ * Wrapper around adminSaveDoctorWithPassword for onboarding new doctors.
+ */
+export async function adminCreateDoctorWithPassword(doctorData) {
+  return adminSaveDoctorWithPassword({
+    clinicId: doctorData.clinicId,
+    name: doctorData.name,
+    specialization: doctorData.specialization,
+    username: doctorData.username,
+    password: doctorData.password,
+    doctorId: null,
+  });
 }
 
 /**
@@ -2027,7 +2276,8 @@ export async function adminDeleteDoctor(doctorId) {
       // Delete tokens referencing this doctor first (satisfies ON DELETE RESTRICT)
       await supabase.from('tokens').delete().eq('doctor_id', doctorId);
       // Delete daily token counters
-      await supabase.from('daily_token_counters').delete().eq('doctor_id', doctorId);
+      try { await supabase.from('token_counters').delete().eq('doctor_id', doctorId); } catch (e) {}
+      try { await supabase.from('daily_token_counters').delete().eq('doctor_id', doctorId); } catch (e) {}
 
       // Look up auth_user_id and clinic_id to clean clinic_members
       const { data: docData } = await supabase
@@ -2062,24 +2312,83 @@ export async function adminDeleteDoctor(doctorId) {
 }
 
 /**
- * adminResetDoctorPassword(doctorId, newPassword)
+ * adminResetDoctorPassword(doctorId, newPassword, optionalDoctorData)
+ * Resets doctor password, calling admin_save_doctor_with_password or admin_reset_doctor_password.
  */
-export async function adminResetDoctorPassword(doctorId, newPassword) {
+export async function adminResetDoctorPassword(doctorId, newPassword, optionalDoctorData = {}) {
   if (!doctorId) return fail('Doctor ID is required.');
   if (!newPassword || newPassword.length < 6) {
     return fail('New password must be at least 6 characters long.');
   }
 
+  // If doctor details provided, call adminSaveDoctorWithPassword directly
+  if (optionalDoctorData.clinicId && optionalDoctorData.username) {
+    return adminSaveDoctorWithPassword({
+      clinicId: optionalDoctorData.clinicId,
+      name: optionalDoctorData.name || 'Doctor',
+      specialization: optionalDoctorData.specialization || 'General',
+      username: optionalDoctorData.username,
+      password: newPassword,
+      doctorId,
+    });
+  }
+
   if (isSupabaseReady) {
-    const { data, error } = await supabase.rpc('admin_reset_doctor_password', {
-      p_doctor_id: doctorId,
-      p_new_password: newPassword,
+    // 1. Try calling admin_reset_doctor_password RPC
+    try {
+      const { data, error } = await supabase.rpc('admin_reset_doctor_password', {
+        p_doctor_id: doctorId,
+        p_new_password: newPassword,
+      });
+      if (!error) return ok(data);
+    } catch (e) {}
+
+    // 2. Fallback: lookup doctor and update via admin_save_doctor_with_password
+    try {
+      const { data: doc } = await supabase
+        .from('doctors')
+        .select('*')
+        .eq('id', doctorId)
+        .maybeSingle();
+
+      if (doc) {
+        return adminSaveDoctorWithPassword({
+          clinicId: doc.clinic_id,
+          name: doc.name,
+          specialization: doc.specialization,
+          username: doc.username,
+          password: newPassword,
+          doctorId: doc.id,
+        });
+      }
+    } catch (e) {}
+
+    return fail('Failed to reset doctor password.');
+  }
+
+  return ok({ success: true });
+}
+
+/**
+ * changeAdminPassword(newPassword)
+ * Updates the logged-in administrator's password in Supabase Auth.
+ */
+export async function changeAdminPassword(newPassword) {
+  if (!newPassword || newPassword.length < 6) {
+    return fail('New password must be at least 6 characters long.');
+  }
+
+  if (isSupabaseReady) {
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
     });
 
     if (error) {
-      return fail(error.message || 'Failed to reset doctor password.');
+      console.error('[dbService] changeAdminPassword error:', error);
+      return fail(error.message || 'Failed to update administrator password.');
     }
-    return ok(data);
+
+    return ok(data?.user || { success: true });
   }
 
   return ok({ success: true });

@@ -48,10 +48,12 @@ import {
   getPlatformAdminSession,
   platformAdminLogin,
   platformAdminLogout,
+  changeAdminPassword,
   adminListAllClinicsAndDoctors,
   adminUpsertClinic,
   adminToggleClinicActive,
   adminDeleteClinic,
+  adminSaveDoctorWithPassword,
   adminCreateDoctorWithPassword,
   adminResetDoctorPassword,
   adminDeleteDoctor,
@@ -95,6 +97,23 @@ export default function PlatformAdminPortal() {
   });
   const [doctorSubmitting, setDoctorSubmitting] = useState(false);
   const [doctorError, setDoctorError]         = useState('');
+
+  // Change Admin Password State
+  const [showAdminPasswordModal, setShowAdminPasswordModal] = useState(false);
+  const [adminPasswordForm, setAdminPasswordForm]           = useState({ newPassword: '', confirmPassword: '' });
+  const [adminPasswordSubmitting, setAdminPasswordSubmitting] = useState(false);
+  const [adminPasswordError, setAdminPasswordError]         = useState('');
+
+  // Edit Doctor Credentials State
+  const [editCredsDoctorTarget, setEditCredsDoctorTarget]   = useState(null);
+  const [editCredsForm, setEditCredsForm]                   = useState({
+    name: '',
+    specialization: '',
+    username: '',
+    newPassword: '',
+  });
+  const [editCredsSubmitting, setEditCredsSubmitting]       = useState(false);
+  const [editCredsError, setEditCredsError]                 = useState('');
 
   const [resetDoctorTarget, setResetDoctorTarget] = useState(null);
   const [newPassword, setNewPassword]             = useState('');
@@ -312,7 +331,8 @@ export default function PlatformAdminPortal() {
       setDoctorError('Please select a clinic.');
       return;
     }
-    if (!doctorForm.name.trim() || !doctorForm.specialization.trim() || !doctorForm.username.trim()) {
+    const cleanUsername = doctorForm.username.trim().toLowerCase();
+    if (!doctorForm.name.trim() || !doctorForm.specialization.trim() || !cleanUsername) {
       setDoctorError('Doctor Name, Specialization, and Username are required.');
       return;
     }
@@ -324,12 +344,13 @@ export default function PlatformAdminPortal() {
     setDoctorSubmitting(true);
     setDoctorError('');
 
-    const res = await adminCreateDoctorWithPassword({
+    const res = await adminSaveDoctorWithPassword({
       clinicId: doctorForm.clinicId,
       name: doctorForm.name.trim(),
       specialization: doctorForm.specialization.trim(),
-      username: doctorForm.username.trim().toLowerCase(),
+      username: cleanUsername,
       password: doctorForm.password,
+      doctorId: null,
     });
 
     setDoctorSubmitting(false);
@@ -345,7 +366,7 @@ export default function PlatformAdminPortal() {
       clinic_id: doctorForm.clinicId,
       name: doctorForm.name.trim(),
       specialization: doctorForm.specialization.trim(),
-      username: doctorForm.username.trim().toLowerCase(),
+      username: cleanUsername,
       average_consultation_minutes: 10,
       duty_start: '09:00',
       duty_end: '17:00',
@@ -374,7 +395,7 @@ export default function PlatformAdminPortal() {
     }));
 
     setShowDoctorModal(false);
-    showFlash(`Doctor ${doctorForm.name} created and credentials linked successfully!`);
+    showFlash(`Doctor ${doctorForm.name} created with username @${cleanUsername}!`);
     await loadData();
   };
 
@@ -408,6 +429,101 @@ export default function PlatformAdminPortal() {
     showFlash(`Doctor ${deleteDoctorTarget.name} has been deleted permanently.`);
     setDeleteDoctorTarget(null);
     await loadData();
+  };
+
+  const openEditCredentials = (doc) => {
+    setEditCredsDoctorTarget(doc);
+    setEditCredsForm({
+      name: doc.name || '',
+      specialization: doc.specialization || '',
+      username: doc.username || '',
+      newPassword: '',
+    });
+    setEditCredsError('');
+  };
+
+  const handleSaveDoctorCredentials = async (e) => {
+    e.preventDefault();
+    const cleanUser = editCredsForm.username.trim().toLowerCase();
+    if (!cleanUser) {
+      setEditCredsError('Doctor username is required.');
+      return;
+    }
+    if (!editCredsForm.newPassword || editCredsForm.newPassword.length < 6) {
+      setEditCredsError('Password must be at least 6 characters long.');
+      return;
+    }
+
+    setEditCredsSubmitting(true);
+    setEditCredsError('');
+
+    const res = await adminSaveDoctorWithPassword({
+      clinicId: editCredsDoctorTarget.clinic_id,
+      name: (editCredsForm.name || editCredsDoctorTarget.name).trim(),
+      specialization: (editCredsForm.specialization || editCredsDoctorTarget.specialization).trim(),
+      username: cleanUser,
+      password: editCredsForm.newPassword,
+      doctorId: editCredsDoctorTarget.id,
+    });
+
+    setEditCredsSubmitting(false);
+
+    if (res?.error) {
+      setEditCredsError(res.error.message || 'Failed to update doctor credentials.');
+      return;
+    }
+
+    // Immediately update local React state
+    setClinics(prev => prev.map(c => {
+      if (c.id === editCredsDoctorTarget.clinic_id) {
+        return {
+          ...c,
+          doctors: (c.doctors || []).map(d => {
+            if (d.id === editCredsDoctorTarget.id) {
+              return {
+                ...d,
+                name: (editCredsForm.name || d.name).trim(),
+                specialization: (editCredsForm.specialization || d.specialization).trim(),
+                username: cleanUser,
+              };
+            }
+            return d;
+          }),
+        };
+      }
+      return c;
+    }));
+
+    showFlash(`Doctor ${editCredsForm.name || editCredsDoctorTarget.name}'s username (@${cleanUser}) and password updated successfully!`);
+    setEditCredsDoctorTarget(null);
+    await loadData();
+  };
+
+  const handleChangeAdminPassword = async (e) => {
+    e.preventDefault();
+    if (!adminPasswordForm.newPassword || adminPasswordForm.newPassword.length < 6) {
+      setAdminPasswordError('New password must be at least 6 characters long.');
+      return;
+    }
+    if (adminPasswordForm.newPassword !== adminPasswordForm.confirmPassword) {
+      setAdminPasswordError('Passwords do not match.');
+      return;
+    }
+
+    setAdminPasswordSubmitting(true);
+    setAdminPasswordError('');
+
+    const res = await changeAdminPassword(adminPasswordForm.newPassword);
+    setAdminPasswordSubmitting(false);
+
+    if (res?.error) {
+      setAdminPasswordError(res.error.message || 'Failed to update administrator password.');
+      return;
+    }
+
+    setShowAdminPasswordModal(false);
+    setAdminPasswordForm({ newPassword: '', confirmPassword: '' });
+    showFlash('Platform Administrator password updated successfully!');
   };
 
   const handleResetPassword = async (e) => {
@@ -565,7 +681,7 @@ export default function PlatformAdminPortal() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={loadData}
               disabled={loadingClinics}
@@ -574,6 +690,19 @@ export default function PlatformAdminPortal() {
             >
               <RefreshCw size={14} className={loadingClinics ? 'animate-spin' : ''} />
               <span className="hidden sm:inline">Refresh</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setShowAdminPasswordModal(true);
+                setAdminPasswordForm({ newPassword: '', confirmPassword: '' });
+                setAdminPasswordError('');
+              }}
+              className="p-2 sm:px-3 sm:py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+              title="Change Administrator Password"
+            >
+              <Lock size={14} className="text-amber-400" />
+              <span className="hidden sm:inline">Change Password</span>
             </button>
 
             <div className="hidden md:flex flex-col text-right">
@@ -855,14 +984,11 @@ export default function PlatformAdminPortal() {
                   </span>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => {
-                        setResetDoctorTarget(doc);
-                        setNewPassword('');
-                        setResetError('');
-                      }}
+                      onClick={() => openEditCredentials(doc)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-950/50 hover:bg-amber-900/60 border border-amber-800/40 text-amber-300 text-xs font-semibold transition-all shadow-sm"
+                      title="Edit doctor login username or reset password"
                     >
-                      <KeyRound size={13} /> Reset Password
+                      <KeyRound size={13} /> Edit Username / Reset Password
                     </button>
                     <button
                       onClick={() => {
@@ -1119,17 +1245,17 @@ export default function PlatformAdminPortal() {
         </div>
       )}
 
-      {/* ── MODAL: Reset Password ─────────────────────────────────────────── */}
-      {resetDoctorTarget && (
+      {/* ── MODAL: Edit Username & Reset Password ─────────────────────────── */}
+      {editCredsDoctorTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-bold text-white text-base flex items-center gap-2">
                 <KeyRound size={18} className="text-amber-400" />
-                Reset Doctor Password
+                Edit Username & Reset Password
               </h3>
               <button
-                onClick={() => setResetDoctorTarget(null)}
+                onClick={() => setEditCredsDoctorTarget(null)}
                 className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
               >
                 <X size={18} />
@@ -1137,25 +1263,67 @@ export default function PlatformAdminPortal() {
             </div>
 
             <p className="text-xs text-slate-400 mb-4">
-              Assign a new login password for <strong>{resetDoctorTarget.name}</strong> (@{resetDoctorTarget.username}).
+              Update the exact login username and assign a new password for{' '}
+              <strong>{editCredsDoctorTarget.name}</strong>.
             </p>
 
-            {resetError && (
+            {editCredsError && (
               <div className="bg-red-950/60 border border-red-800/60 rounded-xl p-3 mb-4 text-xs text-red-200">
-                {resetError}
+                {editCredsError}
               </div>
             )}
 
-            <form onSubmit={handleResetPassword} className="flex flex-col gap-4">
+            <form onSubmit={handleSaveDoctorCredentials} className="flex flex-col gap-4">
               <div>
                 <label className="text-xs font-semibold text-slate-300 block mb-1">
-                  New Password (min 6 chars)
+                  Doctor Name
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. NewSecret2026"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  value={editCredsForm.name}
+                  onChange={(e) => setEditCredsForm(f => ({ ...f, name: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Specialization
+                </label>
+                <input
+                  type="text"
+                  value={editCredsForm.specialization}
+                  onChange={(e) => setEditCredsForm(f => ({ ...f, specialization: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-indigo-300 block mb-1">
+                  Doctor Login Username * (lowercased)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. sneha.rao"
+                  value={editCredsForm.username}
+                  onChange={(e) => setEditCredsForm(f => ({ ...f, username: e.target.value.toLowerCase().trimStart() }))}
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 font-mono"
+                  required
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">Exact username typed will be saved in Supabase database</span>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-amber-300 block mb-1">
+                  New Password * (min 6 chars)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter new assigned password"
+                  value={editCredsForm.newPassword}
+                  onChange={(e) => setEditCredsForm(f => ({ ...f, newPassword: e.target.value }))}
                   className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-500 font-mono"
                   required
                 />
@@ -1164,18 +1332,96 @@ export default function PlatformAdminPortal() {
               <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setResetDoctorTarget(null)}
+                  onClick={() => setEditCredsDoctorTarget(null)}
                   className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold hover:bg-slate-800"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={resetSubmitting}
+                  disabled={editCredsSubmitting}
                   className="px-5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2"
                 >
-                  {resetSubmitting ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
-                  Set New Password
+                  {editCredsSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  Save Credentials
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: Change Admin Password ──────────────────────────────────── */}
+      {showAdminPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-white text-base flex items-center gap-2">
+                <Lock size={18} className="text-indigo-400" />
+                Change Platform Administrator Password
+              </h3>
+              <button
+                onClick={() => setShowAdminPasswordModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4">
+              Enter and confirm a new password for your platform administrator account (<code>{adminUser?.email}</code>).
+            </p>
+
+            {adminPasswordError && (
+              <div className="bg-red-950/60 border border-red-800/60 rounded-xl p-3 mb-4 text-xs text-red-200">
+                {adminPasswordError}
+              </div>
+            )}
+
+            <form onSubmit={handleChangeAdminPassword} className="flex flex-col gap-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  New Password * (min 6 characters)
+                </label>
+                <input
+                  type="password"
+                  placeholder="Enter new administrator password"
+                  value={adminPasswordForm.newPassword}
+                  onChange={(e) => setAdminPasswordForm(f => ({ ...f, newPassword: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  Confirm New Password *
+                </label>
+                <input
+                  type="password"
+                  placeholder="Re-enter new administrator password"
+                  value={adminPasswordForm.confirmPassword}
+                  onChange={(e) => setAdminPasswordForm(f => ({ ...f, confirmPassword: e.target.value }))}
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 font-mono"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 mt-2 pt-4 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowAdminPasswordModal(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={adminPasswordSubmitting}
+                  className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2"
+                >
+                  {adminPasswordSubmitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                  Update Admin Password
                 </button>
               </div>
             </form>
