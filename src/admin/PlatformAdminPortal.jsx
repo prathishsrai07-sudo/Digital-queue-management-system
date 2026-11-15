@@ -65,7 +65,7 @@ export default function PlatformAdminPortal() {
   // ── Auth State ─────────────────────────────────────────────────────────────
   const [adminUser, setAdminUser]         = useState(null);
   const [checkingAuth, setCheckingAuth]   = useState(true);
-  const [loginForm, setLoginForm]         = useState({ identifier: '', password: '' });
+  const [loginForm, setLoginForm]         = useState({ identifier: 'admin', password: '' });
   const [loginLoading, setLoginLoading]   = useState(false);
   const [loginError, setLoginError]       = useState('');
 
@@ -182,14 +182,15 @@ export default function PlatformAdminPortal() {
   // ── 3. Login & Logout ──────────────────────────────────────────────────────
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    if (!loginForm.identifier.trim() || !loginForm.password) {
-      setLoginError('Please enter your administrator username or email and password.');
+    const cleanIdent = (loginForm.identifier || 'admin').trim();
+    if (!loginForm.password) {
+      setLoginError('Please enter your administrator password.');
       return;
     }
     setLoginLoading(true);
     setLoginError('');
 
-    const res = await platformAdminLogin(loginForm.identifier, loginForm.password);
+    const res = await platformAdminLogin(cleanIdent, loginForm.password);
     setLoginLoading(false);
 
     if (res?.error) {
@@ -501,11 +502,14 @@ export default function PlatformAdminPortal() {
 
   const handleChangeAdminPassword = async (e) => {
     e.preventDefault();
-    if (!adminPasswordForm.newPassword || adminPasswordForm.newPassword.length < 6) {
+    const cleanPw = adminPasswordForm.newPassword ? adminPasswordForm.newPassword.trim() : '';
+    const cleanConfirm = adminPasswordForm.confirmPassword ? adminPasswordForm.confirmPassword.trim() : '';
+
+    if (!cleanPw || cleanPw.length < 6) {
       setAdminPasswordError('New password must be at least 6 characters long.');
       return;
     }
-    if (adminPasswordForm.newPassword !== adminPasswordForm.confirmPassword) {
+    if (cleanPw !== cleanConfirm) {
       setAdminPasswordError('Passwords do not match.');
       return;
     }
@@ -513,7 +517,7 @@ export default function PlatformAdminPortal() {
     setAdminPasswordSubmitting(true);
     setAdminPasswordError('');
 
-    const res = await changeAdminPassword(adminPasswordForm.newPassword);
+    const res = await changeAdminPassword(cleanPw);
     setAdminPasswordSubmitting(false);
 
     if (res?.error) {
@@ -523,7 +527,7 @@ export default function PlatformAdminPortal() {
 
     setShowAdminPasswordModal(false);
     setAdminPasswordForm({ newPassword: '', confirmPassword: '' });
-    showFlash('Platform Administrator password updated successfully!');
+    showFlash('Platform Administrator password updated successfully in Supabase!');
   };
 
   const handleResetPassword = async (e) => {
@@ -593,16 +597,17 @@ export default function PlatformAdminPortal() {
           <form onSubmit={handleLoginSubmit} className="flex flex-col gap-4">
             <div>
               <label className="text-xs font-semibold text-slate-300 block mb-1">
-                Admin Username or Email
+                Admin Username / Identifier
               </label>
               <input
                 type="text"
-                placeholder="e.g. arun.kumar or admin@clinic.org"
+                placeholder="admin"
                 value={loginForm.identifier}
                 onChange={(e) => setLoginForm(f => ({ ...f, identifier: e.target.value }))}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-all"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-all font-mono"
                 required
               />
+              <p className="text-[11px] text-slate-500 mt-1">Default administrator username: <code className="text-indigo-400">admin</code></p>
             </div>
 
             <div>
@@ -611,10 +616,10 @@ export default function PlatformAdminPortal() {
               </label>
               <input
                 type="password"
-                placeholder="••••••••"
+                placeholder="Enter administrator password"
                 value={loginForm.password}
                 onChange={(e) => setLoginForm(f => ({ ...f, password: e.target.value }))}
-                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-all"
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-indigo-500 transition-all font-mono"
                 required
               />
             </div>

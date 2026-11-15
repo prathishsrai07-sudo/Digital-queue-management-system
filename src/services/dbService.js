@@ -1773,74 +1773,143 @@ export async function checkIsPlatformAdmin() {
 
 /**
  * platformAdminLogin(identifier, password)
- * Logs in via Supabase Auth and verifies the user is a platform admin.
- * If not a platform admin, immediately signs out and returns unauthorized error.
+ * Verifies credentials against public.platform_admin_credentials via verify_platform_admin_login RPC.
+ * When verified, stores the platform admin session in localStorage and returns the session.
  */
 export async function platformAdminLogin(identifier, password) {
-  if (!identifier || !password) {
-    return fail('Please enter your email or username and password.');
-  }
+  const cleanIdent = (identifier || 'admin').trim();
+  const cleanPass = password ? password.trim() : '';
 
-  const cleanIdent = identifier.trim();
+  if (!cleanPass) {
+    return fail('Please enter your password.');
+  }
 
   if (isSupabaseReady) {
-    let email = cleanIdent;
-    if (!cleanIdent.includes('@')) {
-      const { data: resolvedEmail } = await supabase.rpc('resolve_doctor_login_email', {
+    // 1. Primary RPC check: verify_platform_admin_login (SECURITY DEFINER)
+    try {
+      const { data, error } = await supabase.rpc('verify_platform_admin_login', {
         p_identifier: cleanIdent,
+        p_password: cleanPass,
       });
-      if (resolvedEmail) {
-        email = resolvedEmail;
-      } else {
-        return fail('Invalid platform administrator credentials.');
+
+      if (!error && data === true) {
+        const adminSession = {
+          user: {
+            id: 'platform_admin',
+            email: cleanIdent.includes('@') ? cleanIdent : `${cleanIdent}@platform.internal`,
+            username: cleanIdent,
+            role: 'platform_admin',
+          },
+          role: 'platform_admin',
+          loggedInAt: new Date().toISOString(),
+        };
+
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('sdqms_platform_admin_session', JSON.stringify(adminSession));
+          } catch (e) {
+            console.warn('[dbService] localStorage admin session save warning:', e);
+          }
+        }
+
+        return ok(adminSession);
+      } else if (error) {
+        console.warn('[dbService] verify_platform_admin_login error:', error.message);
       }
+    } catch (rpcErr) {
+      console.warn('[dbService] verify_platform_admin_login exception:', rpcErr);
     }
 
-    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    // 2. Fallback attempt via Supabase Auth signInWithPassword if configured
+    try {
+      let email = cleanIdent;
+      if (!cleanIdent.includes('@')) {
+        const { data: resolvedEmail } = await supabase.rpc('resolve_doctor_login_email', {
+          p_identifier: cleanIdent,
+        });
+        if (resolvedEmail) email = resolvedEmail;
+      }
 
-    if (authErr || !authData?.user) {
-      return fail(authErr?.message || 'Invalid platform administrator credentials.');
-    }
+      if (email.includes('@')) {
+        const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+          email,
+          password: cleanPass,
+        });
 
-    // Verify Platform Admin role
-    const { data: isAdmin } = await checkIsPlatformAdmin();
-    if (!isAdmin) {
-      await supabase.auth.signOut();
-      return fail('Unauthorized: Platform Team access only.');
-    }
+        if (!authErr && authData?.user) {
+          const { data: isAdmin } = await checkIsPlatformAdmin();
+          if (isAdmin) {
+            const adminSession = {
+              user: authData.user,
+              role: 'platform_admin',
+              loggedInAt: new Date().toISOString(),
+            };
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('sdqms_platform_admin_session', JSON.stringify(adminSession));
+            }
+            return ok(adminSession);
+          }
+        }
+      }
+    } catch (_) {}
 
-    return ok({ user: authData.user });
+    return fail('Invalid platform administrator credentials.');
   }
 
-  return ok({ user: { email: cleanIdent } });
+  return fail('Supabase is not configured.');
 }
 
 /**
  * getPlatformAdminSession()
  * Returns the current platform admin user if active and authorized.
+ * Restores session from localStorage so page refreshes stay logged in.
  */
 export async function getPlatformAdminSession() {
-  if (isSupabaseReady) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
-
-    const { data: isAdmin } = await checkIsPlatformAdmin();
-    if (!isAdmin) return null;
-
-    return { user };
+  // 1. Check cached admin session in localStorage first
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('sdqms_platform_admin_session') : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.user) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn('[dbService] Error reading cached platform admin session:', e);
   }
-  return { user: { email: 'admin@platform.internal' } };
+
+  if (isSupabaseReady) {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: isAdmin } = await checkIsPlatformAdmin();
+        if (isAdmin) {
+          const session = { user, role: 'platform_admin' };
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('sdqms_platform_admin_session', JSON.stringify(session));
+          }
+          return session;
+        }
+      }
+    } catch (_) {}
+  }
+
+  return null;
 }
 
 /**
  * platformAdminLogout()
  */
 export async function platformAdminLogout() {
-  if (isSupabaseReady) {
-    await supabase.auth.signOut();
+  try {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('sdqms_platform_admin_session');
+    }
+    if (isSupabaseReady) {
+      await supabase.auth.signOut();
+    }
+  } catch (e) {
+    console.warn('[dbService] platformAdminLogout error:', e);
   }
   return ok(true);
 }
@@ -2478,24 +2547,49 @@ export async function adminResetDoctorPassword(doctorId, newPassword, optionalDo
 
 /**
  * changeAdminPassword(newPassword)
- * Updates the logged-in administrator's password in Supabase Auth.
+ * Updates the platform administrator's password in public.platform_admin_credentials
+ * via the update_platform_admin_password SECURITY DEFINER RPC.
  */
 export async function changeAdminPassword(newPassword) {
-  if (!newPassword || newPassword.length < 6) {
+  const cleanNewPw = newPassword ? newPassword.trim() : '';
+  if (!cleanNewPw || cleanNewPw.length < 6) {
     return fail('New password must be at least 6 characters long.');
   }
 
   if (isSupabaseReady) {
-    const { data, error } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
+    // 1. Primary RPC: update_platform_admin_password (SECURITY DEFINER)
+    try {
+      const { data, error } = await supabase.rpc('update_platform_admin_password', {
+        p_new_password: cleanNewPw,
+      });
 
-    if (error) {
-      console.error('[dbService] changeAdminPassword error:', error);
-      return fail(error.message || 'Failed to update administrator password.');
+      if (!error && (data === true || data === null || typeof data === 'object')) {
+        // Also update Supabase Auth user password if logged into Supabase Auth
+        try {
+          await supabase.auth.updateUser({ password: cleanNewPw });
+        } catch (_) {}
+
+        return ok({ success: true });
+      } else if (error) {
+        console.error('[dbService] update_platform_admin_password error:', error);
+        return fail(error.message || 'Failed to update administrator password in Supabase.');
+      }
+    } catch (rpcErr) {
+      console.warn('[dbService] update_platform_admin_password exception:', rpcErr);
     }
 
-    return ok(data?.user || { success: true });
+    // Fallback: direct Supabase Auth updateUser
+    try {
+      const { data, error } = await supabase.auth.updateUser({
+        password: cleanNewPw,
+      });
+      if (error) {
+        return fail(error.message || 'Failed to update administrator password.');
+      }
+      return ok({ success: true, user: data?.user });
+    } catch (e) {
+      return fail(e.message || 'Failed to update administrator password.');
+    }
   }
 
   return ok({ success: true });
