@@ -126,67 +126,64 @@ export default function DashboardScreen({
         </div>
       </div>
 
-      {/* ── KPI Stat Cards with Distinct Vibrant Healthcare Colors ── */}
+      {/* ── KPI Stat Cards with Elevated Modern SaaS Style ── */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
 
-        {/* 1. Current Token: Vibrant Indigo/Violet Gradient with Soft Glow */}
-        <div className="relative rounded-2xl p-5 bg-gradient-to-br from-indigo-600 via-indigo-500 to-violet-700 text-white shadow-xl shadow-indigo-600/25 border border-indigo-400/30 overflow-hidden flex flex-col justify-between">
-          <div className="absolute top-0 right-0 -mt-2 -mr-2 w-20 h-20 bg-white/10 rounded-full blur-xl" />
+        {/* 1. Current Token: Clean White Card with Sky Blue Squircle */}
+        <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between saas-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-100">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Current Token
             </span>
-            <div className="w-8 h-8 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white">
-              <Hash size={18} />
+            <div className="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center border border-sky-100">
+              <Hash size={20} />
             </div>
           </div>
-          <div className="mt-3">
-            <p className="text-4xl sm:text-5xl font-black tracking-wider text-white drop-shadow-sm">
+          <div className="mt-4">
+            <p className="text-4xl sm:text-5xl font-extrabold tracking-tight text-slate-900 font-mono">
               {currentPatient ? (currentPatient.tokenNumber || currentPatient.token_number || '—') : '—'}
             </p>
-            <p className="text-xs text-indigo-100 mt-1 font-medium truncate">
+            <p className="text-xs text-slate-500 mt-1.5 font-medium truncate">
               {currentPatient ? `${currentPatient.patientName || currentPatient.name || 'Patient'} (${currentPatient.status || 'Active'})` : 'No consultation active'}
             </p>
           </div>
         </div>
 
-        {/* 2. Waiting Count: Warm Amber/Orange Accent Card */}
-        <div className="relative rounded-2xl p-5 bg-gradient-to-br from-amber-500 via-amber-600 to-orange-600 text-white shadow-xl shadow-amber-500/25 border border-amber-300/30 overflow-hidden flex flex-col justify-between">
-          <div className="absolute top-0 right-0 -mt-2 -mr-2 w-20 h-20 bg-white/10 rounded-full blur-xl" />
+        {/* 2. Waiting Count: Clean White Card with Amber Squircle */}
+        <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between saas-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-amber-100">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Patients Waiting
             </span>
-            <div className="w-8 h-8 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white">
-              <Users size={18} />
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100">
+              <Users size={20} />
             </div>
           </div>
-          <div className="mt-3">
-            <p className="text-4xl sm:text-5xl font-black tracking-tight text-white drop-shadow-sm">
+          <div className="mt-4">
+            <p className="text-4xl sm:text-5xl font-extrabold tracking-tight text-slate-900 font-mono">
               {waitingTokens.length}
             </p>
-            <p className="text-xs text-amber-100 mt-1 font-medium">
+            <p className="text-xs text-slate-500 mt-1.5 font-medium">
               In queue for this doctor session
             </p>
           </div>
         </div>
 
-        {/* 3. Served Today: Fresh Emerald/Teal Accent Card */}
-        <div className="relative rounded-2xl p-5 bg-gradient-to-br from-emerald-500 via-teal-600 to-teal-700 text-white shadow-xl shadow-emerald-500/25 border border-emerald-300/30 overflow-hidden flex flex-col justify-between">
-          <div className="absolute top-0 right-0 -mt-2 -mr-2 w-20 h-20 bg-white/10 rounded-full blur-xl" />
+        {/* 3. Served Today: Clean White Card with Emerald Squircle */}
+        <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-xs hover:shadow-md transition-all flex flex-col justify-between saas-card">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-100">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Served Today
             </span>
-            <div className="w-8 h-8 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center text-white">
-              <Activity size={18} />
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+              <Activity size={20} />
             </div>
           </div>
-          <div className="mt-3">
-            <p className="text-4xl sm:text-5xl font-black tracking-tight text-white drop-shadow-sm">
+          <div className="mt-4">
+            <p className="text-4xl sm:text-5xl font-extrabold tracking-tight text-slate-900 font-mono">
               {servedToday}
             </p>
-            <p className="text-xs text-emerald-100 mt-1 font-medium">
+            <p className="text-xs text-slate-500 mt-1.5 font-medium">
               Completed consultations today
             </p>
           </div>

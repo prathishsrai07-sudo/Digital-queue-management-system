@@ -50,3 +50,23 @@ option.light-option {
   color: #0f172a !important;
   padding: 8px 12px;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   MODERN LIGHT-MODE HEALTHCARE SAAS DESIGN SYSTEM
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/* Crisp Light Dot-Grid Background for Patient Portal */
+.saas-dot-grid {
+  background-color: #f8fafc;
+  background-image: radial-gradient(rgba(148, 163, 184, 0.25) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Smooth Micro-Interactions */
+.saas-card {
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.2s ease;
+}
+
+.saas-card:hover {
+  transform: translateY(-2px);
+}
